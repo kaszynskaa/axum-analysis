@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>axum Diagrams Preview</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 2rem; }
+    h1 { color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: .5rem; }
+    h2 { color: #79c0ff; margin-top: 3rem; }
+    p  { color: #8b949e; font-size: .9rem; }
+    .diagram { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 2rem; margin-top: 1rem; overflow-x: auto; }
+    .mermaid svg { max-width: 100%; height: auto; }
+    #error-box { display: none; background: #3d1c1c; border: 1px solid #f85149; border-radius: 6px; padding: 1rem; color: #f85149; margin-top: 1rem; white-space: pre-wrap; font-family: monospace; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <h1>axum — Mermaid Diagrams Preview</h1>
+
+  <!-- ── 1. Architecture ─────────────────────────────────────── -->
+  <h2>1. Architecture Flowchart — System Layers</h2>
+  <p>From TCP accept down through Hyper, Tower middleware, routing, extractors and responses.</p>
+  <div class="diagram">
+    <div class="mermaid">
+flowchart TD
+    subgraph External["External / OS Layer"]
+        TCP["TCP Listener\n(tokio::net::TcpListener)"]
+    end
+
+    subgraph Serve["axum::serve — Entry Point"]
+        SERVE["axum::serve(listener, router)\nSpawns a task per connection"]
+    end
+
+    subgraph Hyper["Hyper / HTTP Layer"]
+        H1["hyper HTTP/1.1\nConnection"]
+        H2["hyper HTTP/2\nConnection"]
+    end
+
+    subgraph Tower["Tower Service Layer"]
+        direction TB
+        MakeService["IntoMakeService\nCreates a cloned Router per connection"]
+        MW["Tower Middleware Stack\n(tower-http: Trace, Cors,\nCompression, Auth, …)"]
+    end
+
+    subgraph Router["axum::Router — Core Routing"]
+        direction TB
+        PR["PathRouter\n(matchit radix tree)\nMatches path + captures params"]
+        MR["MethodRouter\nDispatches on HTTP method\n(get/post/put/delete/…)"]
+        FB["Fallback Handler\n(404 / custom)"]
+    end
+
+    subgraph Handler["Handler Layer"]
+        direction TB
+        HT["Handler trait\n(async fn → Tower Service)"]
+        EX["Extractors\n(FromRequest / FromRequestParts)"]
+        RES["Response types\n(IntoResponse)"]
+    end
+
+    subgraph Extractors["Built-in Extractors"]
+        direction LR
+        PATH["Path&lt;T&gt;"]
+        QUERY["Query&lt;T&gt;"]
+        JSON["Json&lt;T&gt;"]
+        FORM["Form&lt;T&gt;"]
+        STATE["State&lt;T&gt;"]
+        EXT["Extension&lt;T&gt;"]
+        MP["Multipart"]
+        WS["WebSocketUpgrade"]
+    end
+
+    subgraph Responses["Built-in Responses"]
+        direction LR
+        RJSON["Json&lt;T&gt;"]
+        HTML["Html&lt;T&gt;"]
+        REDIR["Redirect"]
+        SSE["Sse&lt;S&gt;"]
+        STATUS["StatusCode"]
+    end
+
+    subgraph Crates["Crate Boundaries"]
+        CORE["axum-core\n(FromRequest, IntoResponse,\nBody — stable API for lib authors)"]
+        MACROS["axum-macros\n(#[debug_handler],\n#[derive(FromRequest)],\n#[derive(TypedPath)])"]
+        EXTRA["axum-extra\n(Cookies, TypedHeader,\nTypedPath, Protobuf,\nJsonLines, …)"]
+    end
+
+    TCP --> SERVE
+    SERVE --> H1
+    SERVE --> H2
+    H1 --> MakeService
+    H2 --> MakeService
+    MakeService --> MW
+    MW --> PR
+    PR -->|"path matched"| MR
+    PR -->|"no match"| FB
+    MR --> HT
+    HT --> EX
+    EX --> PATH & QUERY & JSON & FORM & STATE & EXT & MP & WS
+    HT --> RES
+    RES --> RJSON & HTML & REDIR & SSE & STATUS
+    EX -.->|"implements traits from"| CORE
+    RES -.->|"implements traits from"| CORE
+    HT -.->|"ergonomics via"| MACROS
+    MR -.->|"optional extras from"| EXTRA
+    </div>
+  </div>
+
+  <!-- ── 2. Request Lifecycle ────────────────────────────────── -->
+  <h2>2. Request Lifecycle — Sequence Diagram</h2>
+  <p>One HTTP request from TCP accept through routing, extractor loop, user handler, and response.</p>
+  <div class="diagram">
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Client
+    participant TcpListener as tokio::TcpListener
+    participant Serve as axum::serve
+    participant Hyper as hyper Connection
+    participant MakeSvc as IntoMakeService
+    participant MW as Tower Middleware Stack
+    participant Router as Router / PathRouter
+    participant MethodRouter as MethodRouter
+    participant Handler as Handler trait impl
+    participant Extractor as Extractors
+    participant UserFn as User async fn
+    participant Response as IntoResponse
+
+    Client->>TcpListener: TCP SYN / connect
+    TcpListener-->>Serve: accept() → TcpStream
+    Serve->>Hyper: spawn task, drive connection
+    Client->>Hyper: HTTP request bytes
+    Hyper->>MakeSvc: call(socket_addr) → cloned Router
+    MakeSvc-->>Hyper: Service ready
+
+    Hyper->>MW: Service::call(Request)
+    Note over MW: Trace, CORS, Compression, Auth applied in order
+
+    MW->>Router: Service::call(Request)
+    Router->>Router: matchit lookup on URI path
+    alt path matched
+        Router->>MethodRouter: route found → dispatch
+        MethodRouter->>MethodRouter: check HTTP method filter
+        alt method allowed
+            MethodRouter->>Handler: Service::call(Request)
+            Handler->>Extractor: run_extractors(Request)
+            loop for each handler argument
+                Extractor->>Extractor: extract from parts / body
+                alt extraction fails
+                    Extractor-->>Handler: Rejection (impl IntoResponse)
+                    Handler-->>MethodRouter: rejection response
+                end
+            end
+            Extractor-->>Handler: (arg1, arg2, …) extracted
+            Handler->>UserFn: await user_fn(arg1, arg2, …)
+            UserFn-->>Handler: return value (impl IntoResponse)
+            Handler->>Response: into_response()
+            Response-->>Handler: http::Response&lt;Body&gt;
+            Handler-->>MethodRouter: Response
+        else method not allowed
+            MethodRouter-->>Router: 405 Method Not Allowed
+        end
+    else no path match
+        Router-->>MW: fallback (404 or custom)
+    end
+
+    MW-->>Hyper: Response (post-processing)
+    Hyper-->>Client: HTTP response bytes
+    </div>
+  </div>
+
+  <!-- ── 3. Data / Type Models ───────────────────────────────── -->
+  <h2>3. Core Type &amp; Trait Relationships — ER Diagram</h2>
+  <p>axum has no database schema; this maps the key types and traits as an entity-relationship model.</p>
+  <div class="diagram">
+    <div class="mermaid">
+erDiagram
+
+    ROUTER {
+        PathRouter  path_router
+        State       state
+        Vec         fallbacks
+        Vec         layers
+    }
+
+    PATH_ROUTER {
+        matchit_Router  inner
+        HashMap         route_id_to_endpoint
+        u32             next_route_id
+    }
+
+    METHOD_ROUTER {
+        MethodFilter    allowed_methods
+        Route           get_handler
+        Route           post_handler
+        Route           put_handler
+        Route           delete_handler
+        Option          fallback
+    }
+
+    ROUTE {
+        BoxedHandler    service
+    }
+
+    REQUEST {
+        Method      method
+        Uri         uri
+        HeaderMap   headers
+        Extensions  extensions
+        Body        body
+    }
+
+    RESPONSE {
+        StatusCode  status
+        HeaderMap   headers
+        Body        body
+    }
+
+    HANDLER_TRAIT {
+        string  call_signature
+    }
+
+    FROM_REQUEST_PARTS_TRAIT {
+        string  rejection  "type Rejection: IntoResponse"
+    }
+
+    FROM_REQUEST_TRAIT {
+        string  rejection  "type Rejection: IntoResponse"
+    }
+
+    INTO_RESPONSE_TRAIT {
+        string  method  "fn into_response(self) -> Response"
+    }
+
+    TOWER_SERVICE_TRAIT {
+        string  types  "Request Response Error Future"
+    }
+
+    TOWER_LAYER_TRAIT {
+        string  method  "fn layer(self, S) -> Service"
+    }
+
+    EXTRACTOR_PATH      { string generic "T: Deserialize" }
+    EXTRACTOR_QUERY     { string generic "T: Deserialize" }
+    EXTRACTOR_JSON      { string generic "T: Deserialize" }
+    EXTRACTOR_FORM      { string generic "T: Deserialize" }
+    EXTRACTOR_STATE     { string generic "T: Clone+Send+Sync" }
+    EXTRACTOR_EXTENSION { string generic "T: Clone+Send+Sync" }
+
+    ROUTER             ||--o{ PATH_ROUTER          : "contains"
+    ROUTER             ||--o{ TOWER_LAYER_TRAIT     : "stacks"
+    PATH_ROUTER        ||--o{ METHOD_ROUTER         : "maps route_id to"
+    METHOD_ROUTER      ||--o{ ROUTE                 : "holds per-method"
+    ROUTE              ||--|| TOWER_SERVICE_TRAIT   : "wraps"
+
+    REQUEST            ||--|| RESPONSE              : "processed into"
+
+    HANDLER_TRAIT      ||--|| TOWER_SERVICE_TRAIT       : "converts to"
+    HANDLER_TRAIT      ||--o{ FROM_REQUEST_PARTS_TRAIT  : "extracts args via"
+    HANDLER_TRAIT      ||--o{ FROM_REQUEST_TRAIT        : "extracts body via"
+    HANDLER_TRAIT      ||--|| INTO_RESPONSE_TRAIT       : "return type impls"
+
+    EXTRACTOR_PATH      ||--|| FROM_REQUEST_PARTS_TRAIT : "implements"
+    EXTRACTOR_QUERY     ||--|| FROM_REQUEST_PARTS_TRAIT : "implements"
+    EXTRACTOR_STATE     ||--|| FROM_REQUEST_PARTS_TRAIT : "implements"
+    EXTRACTOR_EXTENSION ||--|| FROM_REQUEST_PARTS_TRAIT : "implements"
+    EXTRACTOR_JSON      ||--|| FROM_REQUEST_TRAIT       : "implements consumes body"
+    EXTRACTOR_FORM      ||--|| FROM_REQUEST_TRAIT       : "implements consumes body"
+
+    RESPONSE            ||--|| INTO_RESPONSE_TRAIT  : "canonical impl"
+    TOWER_LAYER_TRAIT   ||--|| TOWER_SERVICE_TRAIT  : "wraps"
+    </div>
+  </div>
+
+  <div id="error-box"></div>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+    mermaid.init(undefined, '.mermaid').catch(err => {
+      const box = document.getElementById('error-box');
+      box.style.display = 'block';
+      box.textContent = 'Mermaid error: ' + err.message;
+    });
+  </script>
+</body>
+</html>
