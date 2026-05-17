@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>axum — Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 2rem 3rem; line-height: 1.6; }
+
+    h1  { color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: .6rem; font-size: 1.8rem; }
+    h2  { color: #79c0ff; margin-top: 3rem; font-size: 1.25rem; border-left: 3px solid #388bfd; padding-left: .75rem; }
+    h3  { color: #a5d6ff; margin-top: 2rem; font-size: 1rem; }
+    p   { color: #c9d1d9; font-size: .95rem; }
+    hr  { border: none; border-top: 1px solid #21262d; margin: 2.5rem 0; }
+
+    /* tables */
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: .75rem; }
+    thead tr { background: #161b22; }
+    th { text-align: left; padding: .5rem .75rem; color: #8b949e; font-weight: 600; border-bottom: 1px solid #30363d; }
+    td { padding: .45rem .75rem; border-bottom: 1px solid #21262d; color: #c9d1d9; vertical-align: top; }
+    td:first-child { color: #79c0ff; font-family: monospace; white-space: nowrap; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: #161b22; }
+
+    /* code */
+    code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: .85em; background: #161b22; padding: .15em .35em; border-radius: 4px; color: #f0883e; }
+    pre  { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1.25rem; overflow-x: auto; }
+    pre code { background: none; padding: 0; color: #c9d1d9; font-size: .85rem; }
+
+    /* diagram box */
+    .diagram { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 2rem; margin-top: 1rem; overflow-x: auto; }
+    .mermaid svg { max-width: 100%; height: auto; }
+
+    /* crate hierarchy */
+    .crate-tree { font-family: monospace; font-size: .9rem; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1.25rem 1.5rem; color: #a5d6ff; line-height: 1.9; }
+    .crate-tree .dim { color: #484f58; }
+
+    /* badge row */
+    .badges { display: flex; gap: .5rem; flex-wrap: wrap; margin: .5rem 0 1.5rem; }
+    .badge { font-size: .75rem; padding: .2rem .6rem; border-radius: 999px; font-weight: 600; }
+    .badge-blue   { background: #1f3a5f; color: #79c0ff; }
+    .badge-green  { background: #1a3626; color: #56d364; }
+    .badge-orange { background: #3d2200; color: #f0883e; }
+    .badge-red    { background: #3d1c1c; color: #f85149; }
+
+    #error-box { display: none; background: #3d1c1c; border: 1px solid #f85149; border-radius: 6px; padding: 1rem; color: #f85149; margin-top: 1rem; white-space: pre-wrap; font-family: monospace; font-size: .85rem; }
+  </style>
+</head>
+<body>
+
+<h1>axum — Repository Architecture</h1>
+<div class="badges">
+  <span class="badge badge-blue">Rust · Edition 2021</span>
+  <span class="badge badge-blue">MSRV 1.80</span>
+  <span class="badge badge-green">635 tests · 0 failures</span>
+  <span class="badge badge-red">unsafe: forbidden</span>
+  <span class="badge badge-orange">Tokio · Hyper · Tower</span>
+</div>
+
+<!-- ── Tech Stack ───────────────────────────────────────────────── -->
+<h2>Tech Stack</h2>
+<table>
+  <thead><tr><th>Layer</th><th>Technology</th><th>Version</th></tr></thead>
+  <tbody>
+    <tr><td>Language</td><td>Rust</td><td>Edition 2021, MSRV 1.80</td></tr>
+    <tr><td>Async runtime</td><td>Tokio</td><td>1.44</td></tr>
+    <tr><td>HTTP protocol</td><td>Hyper</td><td>1.4.0 (HTTP/1.1 + HTTP/2)</td></tr>
+    <tr><td>Service abstraction</td><td>Tower</td><td>0.5.2</td></tr>
+    <tr><td>HTTP middleware</td><td>tower-http</td><td>0.6.8</td></tr>
+    <tr><td>Path matching</td><td>matchit</td><td>0.9.2 (radix tree)</td></tr>
+    <tr><td>Serialisation</td><td>serde + serde_json</td><td>1.0.221 / 1.0.29</td></tr>
+    <tr><td>Unsafe policy</td><td><strong>Forbidden</strong></td><td>workspace-wide compiler lint</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ── Workspace Crates ─────────────────────────────────────────── -->
+<h2>Workspace Crates</h2>
+<p>A Cargo workspace (<code>Cargo.toml</code> at the root) containing four published crates in a strict dependency hierarchy:</p>
+
+<div class="crate-tree">
+  axum-macros <span class="dim">← proc-macros only, no axum deps</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↑<br>
+  axum-core &nbsp;&nbsp;<span class="dim">← traits + Body, no axum dep</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↑<br>
+  axum &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="dim">← router, handlers, extractors, serve</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↑<br>
+  axum-extra &nbsp;<span class="dim">← optional add-ons, depends on axum</span>
+</div>
+
+<table style="margin-top:1.25rem">
+  <thead><tr><th>Crate</th><th>Version</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>axum/</td><td>0.8.9</td><td>Main framework. <code>Router</code>, all built-in extractors, middleware helpers, response types, WebSocket support, <code>serve()</code>.</td></tr>
+    <tr><td>axum-core/</td><td>0.5.6</td><td>Minimal foundation for library authors. Defines <code>FromRequest</code>, <code>FromRequestParts</code>, <code>IntoResponse</code>, <code>Body</code>. Versioned separately for ecosystem stability.</td></tr>
+    <tr><td>axum-extra/</td><td>0.12.6</td><td>Optional batteries, all feature-gated. Typed cookies, typed HTTP headers, <code>TypedPath</code>, Protobuf, JSON Lines.</td></tr>
+    <tr><td>axum-macros/</td><td>0.5.1</td><td>Proc-macro crate. <code>#[debug_handler]</code>, <code>#[derive(FromRequest)]</code>, <code>#[derive(TypedPath)]</code>. No dependency on axum itself.</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ── Top-Level Directories ────────────────────────────────────── -->
+<h2>Top-Level Directories</h2>
+<table>
+  <thead><tr><th>Path</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>axum/</td><td>Main crate source + <code>Cargo.toml</code></td></tr>
+    <tr><td>axum-core/</td><td>Core traits crate source + <code>Cargo.toml</code></td></tr>
+    <tr><td>axum-extra/</td><td>Optional extras crate source + <code>Cargo.toml</code></td></tr>
+    <tr><td>axum-macros/</td><td>Proc-macro crate source + <code>Cargo.toml</code></td></tr>
+    <tr><td>examples/</td><td>50+ self-contained runnable example projects (JSON API, WebSocket, TLS, JWT, SSE, graceful shutdown, …)</td></tr>
+    <tr><td>contrib/</td><td>IDE tooling contributions — not part of any published crate</td></tr>
+    <tr><td>Cargo.toml</td><td>Workspace manifest; declares all four crates as members, pins shared deps and lint rules</td></tr>
+    <tr><td>Cargo.lock</td><td>Pinned dependency tree for reproducible builds</td></tr>
+    <tr><td>deny.toml</td><td><code>cargo-deny</code> config: license allowlists, duplicate-crate bans, security advisory checks</td></tr>
+    <tr><td>.clippy.toml</td><td>Shared Clippy linter config across the entire workspace</td></tr>
+    <tr><td>CHANGELOG.md</td><td>Per-release history of breaking changes, additions, fixes</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ── Key Modules ──────────────────────────────────────────────── -->
+<h2>Key Modules — <code>axum/src/</code></h2>
+<table>
+  <thead><tr><th>File / Directory</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>lib.rs</td><td>Public re-export surface — every symbol a user imports flows through here</td></tr>
+    <tr><td>routing/mod.rs</td><td><code>Router&lt;S&gt;</code> struct, route composition, <code>.with_state()</code>, <code>.nest()</code>, <code>.merge()</code>, <code>.layer()</code>, fallback logic</td></tr>
+    <tr><td>routing/path_router.rs</td><td><code>PathRouter</code> — owns the matchit radix tree, maps <code>RouteId</code> → <code>MethodRouter</code> or <code>Route</code></td></tr>
+    <tr><td>routing/method_routing.rs</td><td><code>MethodRouter</code> — dispatches on HTTP method; builds <code>get()</code>, <code>post()</code>, <code>put()</code>, … helpers</td></tr>
+    <tr><td>routing/route.rs</td><td><code>Route</code> — type-erased Tower <code>Service</code> wrapper for a single endpoint</td></tr>
+    <tr><td>extract/mod.rs</td><td>Re-exports all built-in extractors</td></tr>
+    <tr><td>extract/path/mod.rs</td><td><code>Path&lt;T&gt;</code> — deserialises URL captures via serde</td></tr>
+    <tr><td>extract/query.rs</td><td><code>Query&lt;T&gt;</code> — deserialises query-string via serde</td></tr>
+    <tr><td>extract/state.rs</td><td><code>State&lt;T&gt;</code> — reads shared app state from <code>Request::extensions</code></td></tr>
+    <tr><td>extract/ws.rs</td><td><code>WebSocketUpgrade</code> — HTTP → WebSocket upgrade handshake</td></tr>
+    <tr><td>extract/multipart.rs</td><td><code>Multipart</code> — streaming multipart/form-data parser</td></tr>
+    <tr><td>handler/mod.rs</td><td><code>Handler</code> trait + <code>impl_handler!</code> macro generating blanket impls for arity 0–16</td></tr>
+    <tr><td>handler/service.rs</td><td><code>HandlerService</code> — wraps a <code>Handler</code> as a reusable Tower <code>Service</code></td></tr>
+    <tr><td>middleware/from_fn.rs</td><td><code>from_fn</code> — build Tower middleware from a plain <code>async fn</code></td></tr>
+    <tr><td>middleware/map_request.rs</td><td><code>MapRequest</code> — transform the request before the handler</td></tr>
+    <tr><td>middleware/map_response.rs</td><td><code>MapResponse</code> — transform the response after the handler</td></tr>
+    <tr><td>response/mod.rs</td><td><code>Html&lt;T&gt;</code>, <code>NoContent</code>, re-exports of <code>IntoResponse</code></td></tr>
+    <tr><td>response/sse.rs</td><td><code>Sse&lt;S&gt;</code> — Server-Sent Events streaming response</td></tr>
+    <tr><td>response/redirect.rs</td><td><code>Redirect</code> — 3xx response helpers</td></tr>
+    <tr><td>serve/mod.rs</td><td><code>axum::serve()</code> — accept loop, per-connection task spawning, graceful shutdown</td></tr>
+    <tr><td>body/mod.rs</td><td><code>Body</code> newtype wrapping hyper <code>Incoming</code>; <code>to_bytes</code> utility</td></tr>
+    <tr><td>json.rs</td><td><code>Json&lt;T&gt;</code> extractor (deserialise) + response (serialise), behind <code>json</code> feature</td></tr>
+    <tr><td>form.rs</td><td><code>Form&lt;T&gt;</code> extractor for <code>application/x-www-form-urlencoded</code></td></tr>
+    <tr><td>error_handling/mod.rs</td><td><code>HandleError</code> Tower layer — converts service errors into HTTP responses</td></tr>
+    <tr><td>test_helpers/</td><td><code>TestClient</code> for integration tests without a real TCP socket</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ── Public Entry Points ──────────────────────────────────────── -->
+<h2>Public Entry Points</h2>
+
+<h3><code>axum::serve()</code> — <code>axum/src/serve/mod.rs:103</code></h3>
+<pre><code>pub fn serve&lt;L, M, S, B&gt;(listener: L, make_service: M) -&gt; Serve&lt;…&gt;</code></pre>
+<p>Starts the HTTP server. Accepts a <code>tokio::net::TcpListener</code> and a <code>Router&lt;()&gt;</code>.
+Drives <code>hyper_util::server::conn::auto::Builder</code> (HTTP/1 + HTTP/2) and spawns one Tokio task per accepted connection.</p>
+
+<h3><code>Router&lt;S&gt;</code> — <code>axum/src/routing/mod.rs:86</code></h3>
+<pre><code>pub struct Router&lt;S = ()&gt;</code></pre>
+<p>The primary application-builder type. <code>S</code> is the <em>missing</em> state — only <code>Router&lt;()&gt;</code> (state provided via <code>.with_state(s)</code>) can be passed to <code>serve()</code>.
+Key methods: <code>.route()</code>, <code>.nest()</code>, <code>.merge()</code>, <code>.layer()</code>, <code>.route_layer()</code>, <code>.fallback()</code>, <code>.with_state()</code>.</p>
+
+<h3>Method helpers — <code>axum/src/routing/method_routing.rs</code></h3>
+<pre><code>pub use method_routing::{get, post, put, delete, patch, head, options, trace, any, on};</code></pre>
+<p>Each returns a <code>MethodRouter</code>. The argument is any async function whose parameters implement <code>FromRequest</code>/<code>FromRequestParts</code> and whose return type implements <code>IntoResponse</code>.</p>
+
+<h3><code>Handler</code> trait — <code>axum/src/handler/mod.rs:100</code></h3>
+<pre><code>pub trait Handler&lt;T, S&gt;: Clone + Send + Sized + 'static {
+    fn call(self, req: Request, state: S) -&gt; Self::Future;
+}</code></pre>
+<p>Blanket-implemented for all async functions of arity 0–16.</p>
+
+<h3><code>FromRequest</code> / <code>FromRequestParts</code> — <code>axum-core/src/extract/mod.rs</code></h3>
+<p>Core extractor traits. Implement <code>FromRequestParts</code> for extractors that do not consume the body; implement <code>FromRequest</code> for extractors that may consume the body (must be the last handler argument).</p>
+
+<h3><code>IntoResponse</code> — <code>axum-core/src/response/mod.rs</code></h3>
+<pre><code>pub trait IntoResponse {
+    fn into_response(self) -&gt; Response;
+}</code></pre>
+<p>Implemented for tuples, <code>Json&lt;T&gt;</code>, <code>Html&lt;T&gt;</code>, <code>String</code>, <code>Bytes</code>, <code>StatusCode</code>, <code>Result&lt;T, E&gt;</code>, and more.</p>
+
+<hr>
+
+<!-- ── External Dependencies ────────────────────────────────────── -->
+<h2>External Dependencies</h2>
+
+<h3>Runtime and HTTP</h3>
+<table>
+  <thead><tr><th>Crate</th><th>Version</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>tokio</td><td>1.44</td><td>Async runtime, <code>TcpListener</code>, timers, <code>sync::watch</code></td></tr>
+    <tr><td>hyper</td><td>1.4.0</td><td>HTTP/1.1 + HTTP/2 protocol implementation</td></tr>
+    <tr><td>hyper-util</td><td>0.1.4</td><td><code>TowerToHyperService</code>, <code>auto::Builder</code>, <code>TokioIo</code></td></tr>
+    <tr><td>tower</td><td>0.5.2</td><td><code>Service</code> + <code>Layer</code> abstractions; <code>ServiceExt</code></td></tr>
+    <tr><td>tower-service</td><td>0.3</td><td><code>Service</code> trait</td></tr>
+    <tr><td>tower-layer</td><td>0.3.2</td><td><code>Layer</code> trait</td></tr>
+    <tr><td>tower-http</td><td>0.6.8</td><td>Ready-made HTTP middleware: Trace, CORS, Compression, Auth</td></tr>
+  </tbody>
+</table>
+
+<h3>HTTP Types</h3>
+<table>
+  <thead><tr><th>Crate</th><th>Version</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>http</td><td>1.0.0</td><td><code>Request</code>, <code>Response</code>, <code>Method</code>, <code>StatusCode</code>, <code>HeaderMap</code>, <code>Uri</code></td></tr>
+    <tr><td>http-body</td><td>1.0.0</td><td><code>Body</code> trait</td></tr>
+    <tr><td>http-body-util</td><td>0.1.0</td><td><code>BodyExt</code>, <code>Limited</code>, <code>Empty</code>, <code>Full</code></td></tr>
+    <tr><td>bytes</td><td>1.7</td><td>Zero-copy <code>Bytes</code> / <code>BytesMut</code></td></tr>
+  </tbody>
+</table>
+
+<h3>Routing and Serialisation</h3>
+<table>
+  <thead><tr><th>Crate</th><th>Version</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>matchit</td><td>0.9.2</td><td>Radix-tree path matching with <code>{param}</code> and <code>{*wildcard}</code></td></tr>
+    <tr><td>serde</td><td>1.0.221</td><td>Serialisation traits</td></tr>
+    <tr><td>serde_json</td><td>1.0.29</td><td>JSON — <code>Json&lt;T&gt;</code> extractor/response (<code>json</code> feature)</td></tr>
+    <tr><td>serde_html_form</td><td>0.4.0</td><td>HTML form decoding (<code>form</code> feature)</td></tr>
+    <tr><td>mime</td><td>0.3.16</td><td>MIME type parsing for <code>Content-Type</code> validation</td></tr>
+    <tr><td>serde_path_to_error</td><td>—</td><td>Wraps serde errors with the field path that failed</td></tr>
+  </tbody>
+</table>
+
+<h3>Async Utilities</h3>
+<table>
+  <thead><tr><th>Crate</th><th>Version</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>futures-core</td><td>0.3</td><td><code>Stream</code> + <code>Future</code> primitives</td></tr>
+    <tr><td>futures-util</td><td>0.3</td><td><code>FutureExt</code>, <code>StreamExt</code> combinators</td></tr>
+    <tr><td>pin-project-lite</td><td>0.2.7</td><td>Safe <code>Pin</code> projection</td></tr>
+    <tr><td>sync_wrapper</td><td>1.0.0</td><td>Makes <code>!Send</code> types usable in <code>Send</code> contexts</td></tr>
+    <tr><td>percent-encoding</td><td>2.1</td><td>URL percent-encode/decode</td></tr>
+  </tbody>
+</table>
+
+<h3>Optional / Feature-gated</h3>
+<table>
+  <thead><tr><th>Crate</th><th>Feature flag</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>tokio-tungstenite</td><td>ws</td><td>WebSocket upgrade</td></tr>
+    <tr><td>sha1 + base64</td><td>ws</td><td>WebSocket handshake</td></tr>
+    <tr><td>multer</td><td>multipart</td><td>Multipart form-data parsing</td></tr>
+    <tr><td>tracing</td><td>tracing</td><td>Structured logging</td></tr>
+  </tbody>
+</table>
+
+<h3>Proc-macro Crate Only</h3>
+<table>
+  <thead><tr><th>Crate</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>syn 2.0</td><td>Rust AST parsing</td></tr>
+    <tr><td>quote 1.0</td><td>Token-stream code generation</td></tr>
+    <tr><td>proc-macro2 1.0</td><td>Macro token stream API</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ── Architecture Flowchart ───────────────────────────────────── -->
+<h2>Architecture Flowchart — System Layers</h2>
+<p>From TCP accept down through Hyper, Tower middleware, routing, extractors, and responses.</p>
+<div class="diagram">
+  <div class="mermaid">
+flowchart TD
+    subgraph External["External / OS Layer"]
+        TCP["TCP Listener\n(tokio::net::TcpListener)"]
+    end
+
+    subgraph Serve["axum::serve — Entry Point"]
+        SERVE["axum::serve(listener, router)\nSpawns a task per connection"]
+    end
+
+    subgraph Hyper["Hyper / HTTP Layer"]
+        H1["hyper HTTP/1.1\nConnection"]
+        H2["hyper HTTP/2\nConnection"]
+    end
+
+    subgraph Tower["Tower Service Layer"]
+        direction TB
+        MakeService["IntoMakeService\nCreates a cloned Router per connection"]
+        MW["Tower Middleware Stack\n(tower-http: Trace, Cors,\nCompression, Auth, …)"]
+    end
+
+    subgraph Router["axum::Router — Core Routing"]
+        direction TB
+        PR["PathRouter\n(matchit radix tree)\nMatches path + captures params"]
+        MR["MethodRouter\nDispatches on HTTP method\n(get/post/put/delete/…)"]
+        FB["Fallback Handler\n(404 / custom)"]
+    end
+
+    subgraph Handler["Handler Layer"]
+        direction TB
+        HT["Handler trait\n(async fn → Tower Service)"]
+        EX["Extractors\n(FromRequest / FromRequestParts)"]
+        RES["Response types\n(IntoResponse)"]
+    end
+
+    subgraph Extractors["Built-in Extractors"]
+        direction LR
+        PATH["Path&lt;T&gt;"]
+        QUERY["Query&lt;T&gt;"]
+        JSON["Json&lt;T&gt;"]
+        FORM["Form&lt;T&gt;"]
+        STATE["State&lt;T&gt;"]
+        EXT["Extension&lt;T&gt;"]
+        MP["Multipart"]
+        WS["WebSocketUpgrade"]
+    end
+
+    subgraph Responses["Built-in Responses"]
+        direction LR
+        RJSON["Json&lt;T&gt;"]
+        HTML["Html&lt;T&gt;"]
+        REDIR["Redirect"]
+        SSE["Sse&lt;S&gt;"]
+        STATUS["StatusCode"]
+    end
+
+    subgraph Crates["Crate Boundaries"]
+        CORE["axum-core\n(FromRequest, IntoResponse,\nBody — stable API for lib authors)"]
+        MACROS["axum-macros\n(#[debug_handler],\n#[derive(FromRequest)],\n#[derive(TypedPath)])"]
+        EXTRA["axum-extra\n(Cookies, TypedHeader,\nTypedPath, Protobuf,\nJsonLines, …)"]
+    end
+
+    TCP --> SERVE
+    SERVE --> H1
+    SERVE --> H2
+    H1 --> MakeService
+    H2 --> MakeService
+    MakeService --> MW
+    MW --> PR
+    PR -->|"path matched"| MR
+    PR -->|"no match"| FB
+    MR --> HT
+    HT --> EX
+    EX --> PATH & QUERY & JSON & FORM & STATE & EXT & MP & WS
+    HT --> RES
+    RES --> RJSON & HTML & REDIR & SSE & STATUS
+    EX -.->|"implements traits from"| CORE
+    RES -.->|"implements traits from"| CORE
+    HT -.->|"ergonomics via"| MACROS
+    MR -.->|"optional extras from"| EXTRA
+  </div>
+</div>
+
+<div id="error-box"></div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+  mermaid.init(undefined, '.mermaid').catch(err => {
+    const box = document.getElementById('error-box');
+    box.style.display = 'block';
+    box.textContent = 'Mermaid error: ' + err.message;
+  });
+</script>
+</body>
+</html>
