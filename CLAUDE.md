@@ -17,10 +17,21 @@ gh api repos/tokio-rs/axum/contents/<path> --jq '.content' | base64 -d
 | Path | Contents |
 |------|----------|
 | `docs/` | Reference documents: architecture overview, request lifecycle diagrams, entry-point catalogue, dependency tables, quality report |
-| `docs/diagrams/` | Mermaid diagrams (architecture, data models, request sequence) and their rendered PNG/HTML previews |
+| `docs/diagrams/` | Mermaid diagrams (see table below) and their rendered PNG/HTML previews |
 | `answers/` | Question-driven analysis files — one file per prompt/question |
 | `answers/improved answers/` | Revised or expanded versions of earlier answers |
 | `answers/answer for last subpart/` | Numbered answer variants for the final sub-question |
+
+### Diagram inventory
+
+| File | Diagram type | What it shows |
+|------|-------------|---------------|
+| `docs/diagrams/architecture.md` | Flowchart | System layers: TCP → serve → hyper → Tower middleware → Router → Handler → extractors/responses; crate boundaries |
+| `docs/diagrams/request-sequence.md` | Flowchart (detailed) | Full happy-path + error paths with file:line annotations at every node |
+| `docs/diagrams/data_models.md` | ER diagram | Key types and traits as entities (`Router`, `PathRouter`, `MethodRouter`, `Request`, `Response`, trait relationships) |
+| `docs/diagrams/sequence_request_lifecycle.md` | **Sequence diagram** | Autonumbered actor-to-actor message flow for `POST /users`; `alt`/`loop` blocks for 404, 405, and extraction failures |
+| `docs/diagrams/state_router_and_request.md` | **State diagram (×2)** | (1) `Router<S>` compile-time type-state machine: Building → Ready → Serving; (2) runtime request processing states: Accepted → PathMatching → … → Sending |
+| `docs/diagrams/class_type_hierarchy.md` | **Class diagram (×2)** | (1) Routing ownership chain: `Router` → `RouterInner` → `PathRouter` → `Node` → `Endpoint` → `MethodRouter` → `MethodEndpoint`; (2) trait system: `Service`, `Handler`, `FromRequestParts`, `FromRequest`, `IntoResponse` with all concrete implementors |
 
 ## Document conventions
 
