@@ -1,5 +1,5 @@
 # Prompt
-> Rewrite the routing system.
+> Analyze the current routing implementation in axum. Focus only on the modules related to Router, MethodRouter, and route matching. Do not rewrite code. Identify the main abstractions, explain their responsibilities, and suggest at most two small refactoring opportunities with file paths and line references.
 
 ---
 
