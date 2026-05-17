@@ -1,5 +1,25 @@
 # Code Review — answers/ and answers/improved answers/
 
+## Key Findings
+
+1. **[HIGH — Security]** Cache key uses only the URI string, with no account for authentication. Any endpoint returning per-user data would serve one user's cached response to all other callers. Affects `improved answers/caching_verification_and_design.md`.
+
+2. **[HIGH — Startup panic]** Both `add_caching_fastrustcache.md` and `improved answers/caching_verification_and_design.md` use the deprecated `:id` path syntax (e.g. `"/users/:id"`). axum v0.8.9 panics at startup on this syntax; the correct form is `"/users/{id}"`.
+
+3. **[HIGH — Won't compile]** `add_caching_fastrustcache.md` calls `response.clone()` on `axum::Response`, which is not `Clone`. The middleware snippet that stores responses in the cache will not compile.
+
+4. **[MEDIUM — Runtime panic]** Three bare `.unwrap()` calls in the `get_user` handler in `add_caching_fastrustcache.md` — on cache deserialization, the database query, and serialization — will panic and drop connections instead of returning error responses.
+
+5. **[MEDIUM — Logic error]** `add_caching_fastrustcache.md` defines `AppState.cache` as `Cache<String, Vec<u8>>` but the middleware section assumes `Cache<String, Response>`. The two examples are type-incompatible and cannot be used together.
+
+6. **[MEDIUM — Content integrity]** Three files have swapped prompts: `improved answers/fix_the_bug.md` carries the extractor-bug search prompt but contains hygiene fixes; `improved answers/rewrite_routing_system.md` carries the analysis prompt but contains a rewrite plan; `routing_analysis.md` carries the rewrite prompt but contains an analysis.
+
+7. **[LOW — Code quality]** `improved answers/caching_verification_and_design.md` calls `.unwrap()` on `Response::builder().body(...)`, which returns a `Result` and should be handled explicitly.
+
+8. **[LOW — Repository hygiene]** `.DS_Store` files in `answers/` and `answers/improved answers/` remain tracked by git despite the `.gitignore` added earlier.
+
+---
+
 Reviewed files (all `.md` files currently present):
 
 **answers/**
