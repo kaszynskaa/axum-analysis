@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>axum — Request Flow</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 2rem 3rem; line-height: 1.6; }
+
+    h1  { color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: .6rem; font-size: 1.8rem; }
+    h2  { color: #79c0ff; margin-top: 3rem; font-size: 1.25rem; border-left: 3px solid #388bfd; padding-left: .75rem; }
+    p   { color: #c9d1d9; font-size: .95rem; }
+    hr  { border: none; border-top: 1px solid #21262d; margin: 2.5rem 0; }
+
+    /* tables */
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: .75rem; }
+    thead tr { background: #161b22; }
+    th { text-align: left; padding: .5rem .75rem; color: #8b949e; font-weight: 600; border-bottom: 1px solid #30363d; }
+    td { padding: .45rem .75rem; border-bottom: 1px solid #21262d; color: #c9d1d9; vertical-align: top; }
+    td:first-child { font-family: monospace; white-space: nowrap; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: #161b22; }
+
+    /* colour swatches in legend table */
+    .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+    .sw-blue   { background: #1f3a5f; border: 1px solid #388bfd; }
+    .sw-green  { background: #1a3626; border: 1px solid #3fb950; }
+    .sw-red    { background: #3d1c1c; border: 1px solid #f85149; }
+    .sw-yellow { background: #3d2200; border: 1px solid #d29922; }
+    .sw-purple { background: #2d1f63; border: 1px solid #a371f7; }
+    .sw-grey   { background: #21262d; border: 1px solid #484f58; }
+
+    /* code */
+    code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: .85em; background: #161b22; padding: .15em .35em; border-radius: 4px; color: #f0883e; }
+
+    /* diagram */
+    .diagram { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 2rem; margin-top: 1rem; overflow-x: auto; }
+    .mermaid svg { max-width: 100%; height: auto; }
+
+    /* constraints list */
+    ol { color: #c9d1d9; font-size: .93rem; padding-left: 1.5rem; }
+    ol li { margin-bottom: .6rem; }
+
+    /* badges */
+    .badges { display: flex; gap: .5rem; flex-wrap: wrap; margin: .5rem 0 1.5rem; }
+    .badge  { font-size: .75rem; padding: .2rem .6rem; border-radius: 999px; font-weight: 600; }
+    .badge-blue   { background: #1f3a5f; color: #79c0ff; }
+    .badge-green  { background: #1a3626; color: #56d364; }
+    .badge-orange { background: #3d2200; color: #f0883e; }
+
+    #error-box { display: none; background: #3d1c1c; border: 1px solid #f85149; border-radius: 6px; padding: 1rem; color: #f85149; margin-top: 1rem; white-space: pre-wrap; font-family: monospace; font-size: .85rem; }
+  </style>
+</head>
+<body>
+
+<h1>axum — Request Flow Architecture</h1>
+<div class="badges">
+  <span class="badge badge-blue">Router → Routing → Extractors → Handler → Response</span>
+  <span class="badge badge-green">Tower / Hyper integration</span>
+  <span class="badge badge-orange">File paths at each step</span>
+</div>
+
+<p>How a single HTTP request travels through every layer of the axum stack,
+with the responsible source file noted at each node.</p>
+
+<!-- ── Flowchart ──────────────────────────────────────────────────── -->
+<h2>Flowchart</h2>
+<div class="diagram">
+  <div class="mermaid">
+flowchart TD
+    Client(["Client\nHTTP request"])
+
+    subgraph OS["OS / Tokio"]
+        TCP["tokio::net::TcpListener\n· accept() blocks until SYN\n· yields (TcpStream, SocketAddr)"]
+    end
+
+    subgraph Serve["axum/src/serve/mod.rs"]
+        SRV["serve() L103\nbuilds Serve struct"]
+        RUN["Serve::run() L321\ninfinte accept loop"]
+        HC["handle_connection() L559\n· TokioIo wraps TcpStream\n· clones Router via MakeService\n· wraps in TowerToHyperService"]
+    end
+
+    subgraph HyperLayer["hyper-util — external"]
+        AUTO["auto::Builder L603\nHTTP/1.1 or HTTP/2\nserve_connection_with_upgrades()"]
+        PARSE["hyper: parse bytes\n→ Request&lt;Incoming&gt;"]
+    end
+
+    subgraph BodyWrap["axum/src/body/mod.rs"]
+        BODY["Body::new() L594\nwraps Incoming → axum Body"]
+    end
+
+    subgraph TowerMW["Tower Middleware Stack\ntower-http / custom layers"]
+        MW1["Layer N  e.g. TraceLayer"]
+        MW2["Layer N-1  e.g. CorsLayer"]
+        MWN["Layer 1  e.g. CompressionLayer\n(applied innermost-first)"]
+    end
+
+    subgraph RouterBlock["axum/src/routing/mod.rs"]
+        RCALL["Router::call() L614\nService impl for Router&lt;()&gt;\n→ call_with_state(req, ())"]
+    end
+
+    subgraph PathMatch["axum/src/routing/path_router.rs"]
+        PMATCH["PathRouter::call_with_state() L325\nmatchit node.at(uri.path()) L342\n→ radix-tree O(n) lookup"]
+        PARAMS["url_params::insert_url_params() L353\nstores {id}/{*rest} captures\ninto Request::extensions"]
+        MPATH["set_matched_path_for_request() L346\nstores '/users/:id' string\ninto Request::extensions\n(feature = matched-path)"]
+    end
+
+    subgraph MethodDisp["axum/src/routing/method_routing.rs"]
+        MDISP["MethodRouter::call_with_state() L1167\nmacro call!(req, POST, post) L1193\nchecks req.method()"]
+        MKROUTE["handler.clone().into_route(state)\n→ BoxedHandler → Route"]
+        ONESHOT["route.oneshot_inner_owned(req)"]
+    end
+
+    subgraph HandlerBlock["axum/src/handler/mod.rs"]
+        HCALL["Handler::call() L238\nimpl_handler! macro\nsplits req → (parts, body)"]
+    end
+
+    subgraph ExtractParts["FromRequestParts extractors\naxum-core/src/extract/mod.rs"]
+        EP1["State&lt;T&gt;::from_request_parts()\naxum/src/extract/state.rs\nreads T from extensions"]
+        EP2["Path&lt;T&gt;::from_request_parts()\naxum/src/extract/path/mod.rs\ndeserialises url_params"]
+        EP3["Query&lt;T&gt;::from_request_parts()\naxum/src/extract/query.rs\nparses URI query string"]
+        EP4["Extension&lt;T&gt;::from_request_parts()\naxum/src/extension.rs"]
+        EPERR{{"Rejection?\n→ rejection.into_response()\nshort-circuit"}}
+    end
+
+    subgraph ExtractBody["FromRequest extractor (last arg only)\naxum-core/src/extract/mod.rs"]
+        EB1["Json&lt;T&gt;::from_request()\naxum/src/json.rs L106\n· checks Content-Type L107\n· buffers body → Bytes L111\n· serde_json::from_slice L184"]
+        EB2["Form&lt;T&gt;::from_request()\naxum/src/form.rs\n· serde_html_form decode"]
+        EB3["Bytes::from_request()\nhttp-body-util buffer"]
+        EB4["Multipart::from_request()\naxum/src/extract/multipart.rs\n· multer streaming parser"]
+        EBERR{{"Rejection?\n→ rejection.into_response()\nshort-circuit"}}
+    end
+
+    subgraph UserFn["User-defined async fn"]
+        UFN["await handler(arg1, arg2, …)\nreturns impl IntoResponse"]
+    end
+
+    subgraph ResponseConv["Response conversion\naxum-core/src/response/mod.rs"]
+        IR["IntoResponse::into_response()\ne.g. Json&lt;T&gt;: axum/src/json.rs L201\n· serde_json::to_writer L229\n· sets Content-Type: application/json\ne.g. Html&lt;T&gt;: response/mod.rs\ne.g. Redirect: response/redirect.rs\ne.g. Sse&lt;S&gt;: response/sse.rs"]
+    end
+
+    subgraph MWPost["Tower Middleware (post-processing)"]
+        MWP["Layers run in reverse\ne.g. compress body, add headers,\nrecord trace span duration"]
+    end
+
+    subgraph HyperOut["hyper-util — external"]
+        FRAME["frame Response as HTTP bytes\nwrite to TokioIo socket"]
+    end
+
+    ClientOut(["Client\nHTTP response"])
+
+    Client      --> TCP
+    TCP         --> RUN
+    RUN         --> HC
+    HC          --> SRV
+    HC          --> AUTO
+    AUTO        --> PARSE
+    PARSE       --> BODY
+    BODY        --> MW1
+    MW1         --> MW2
+    MW2         --> MWN
+    MWN         --> RCALL
+    RCALL       --> PMATCH
+    PMATCH      -->|"match found"| PARAMS
+    PARAMS      --> MPATH
+    MPATH       --> MDISP
+    MDISP       -->|"method matched"| MKROUTE
+    MKROUTE     --> ONESHOT
+    ONESHOT     --> HCALL
+    HCALL       --> EP1 & EP2 & EP3 & EP4
+    EP1 & EP2 & EP3 & EP4 --> EPERR
+    EPERR       -->|"ok"| EB1
+    EPERR       -->|"ok"| EB2
+    EPERR       -->|"ok"| EB3
+    EPERR       -->|"ok"| EB4
+    EB1 & EB2 & EB3 & EB4 --> EBERR
+    EBERR       -->|"ok"| UFN
+    UFN         --> IR
+    IR          --> MWP
+    MWP         --> FRAME
+    FRAME       --> ClientOut
+
+    PMATCH      -->|"404 no match"| MWP
+    MDISP       -->|"405 method not allowed"| MWP
+    EPERR       -->|"rejection"| MWP
+    EBERR       -->|"rejection"| MWP
+
+    classDef layer   fill:#1f3a5f,stroke:#388bfd,color:#a5d6ff
+    classDef extract fill:#1a3626,stroke:#3fb950,color:#7ee787
+    classDef error   fill:#3d1c1c,stroke:#f85149,color:#ffa198
+    classDef user    fill:#3d2200,stroke:#d29922,color:#e3b341
+    classDef resp    fill:#2d1f63,stroke:#a371f7,color:#d2a8ff
+    classDef extern  fill:#21262d,stroke:#484f58,color:#8b949e
+
+    class MW1,MW2,MWN,MWP layer
+    class EP1,EP2,EP3,EP4,EB1,EB2,EB3,EB4 extract
+    class EPERR,EBERR error
+    class UFN user
+    class IR resp
+    class AUTO,PARSE,FRAME extern
+  </div>
+</div>
+
+<hr>
+
+<!-- ── Colour Legend ─────────────────────────────────────────────── -->
+<h2>Colour Key</h2>
+<table>
+  <thead><tr><th>Colour</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><span class="swatch sw-blue"></span>Blue</td><td>Tower middleware layers — run before routing (pre-processing) and after the handler (post-processing)</td></tr>
+    <tr><td><span class="swatch sw-green"></span>Green</td><td>Extractors — <code>FromRequestParts</code> (non-body) and <code>FromRequest</code> (body) implementations</td></tr>
+    <tr><td><span class="swatch sw-red"></span>Red diamonds</td><td>Rejection short-circuit points — any failure immediately returns an HTTP error response</td></tr>
+    <tr><td><span class="swatch sw-yellow"></span>Yellow</td><td>User-defined async handler function</td></tr>
+    <tr><td><span class="swatch sw-purple"></span>Purple</td><td><code>IntoResponse</code> conversion — serialises the return value into an <code>http::Response&lt;Body&gt;</code></td></tr>
+    <tr><td><span class="swatch sw-grey"></span>Grey</td><td>External crates (hyper-util, OS/Tokio) outside the axum source tree</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ── Design Constraints ────────────────────────────────────────── -->
+<h2>Key Design Constraints</h2>
+<ol>
+  <li>
+    <strong><code>FromRequestParts</code> before <code>FromRequest</code></strong> —
+    parts extractors share a <code>&amp;mut Parts</code> borrow and run first;
+    the body extractor runs last because it consumes the body
+    (<code>axum/src/handler/mod.rs:239–252</code>).
+  </li>
+  <li>
+    <strong>State lives in <code>Request::extensions</code></strong> —
+    <code>Router::with_state()</code> inserts the state at startup;
+    <code>State&lt;T&gt;::from_request_parts</code> reads it back with zero argument-passing overhead.
+  </li>
+  <li>
+    <strong>URL params live in <code>Request::extensions</code></strong> —
+    <code>url_params::insert_url_params()</code> (<code>path_router.rs:353</code>)
+    stores matchit captures; <code>Path&lt;T&gt;</code> reads them back without re-parsing the URI.
+  </li>
+  <li>
+    <strong>Every rejection is a response</strong> —
+    <code>type Rejection: IntoResponse</code> means any extractor failure produces a valid
+    HTTP response directly, with no <code>unwrap</code> or panic path.
+  </li>
+  <li>
+    <strong>Tower middleware wraps the entire Router</strong> —
+    layers applied via <code>.layer()</code> see both the request (before routing)
+    and the response (after the handler), applied in stack order.
+  </li>
+</ol>
+
+<div id="error-box"></div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+  mermaid.init(undefined, '.mermaid').catch(err => {
+    const box = document.getElementById('error-box');
+    box.style.display = 'block';
+    box.textContent = 'Mermaid error: ' + err.message;
+  });
+</script>
+</body>
+</html>
