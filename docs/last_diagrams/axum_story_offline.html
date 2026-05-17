@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>axum: A Story in Code (offline)</title>
+<style>
+:root {
+  --bg:#0d1117; --surf:#161b22; --brd:#30363d;
+  --txt:#e6edf3; --dim:#8b949e;
+  --blue:#58a6ff; --green:#3fb950; --orange:#ffa657;
+  --purple:#d2a8ff; --red:#f85149; --gold:#ffd700;
+  --cyan:#79c0ff; --hl:#1f6feb; --panel:280px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+header{background:var(--surf);border-bottom:1px solid var(--brd);
+  padding:11px 22px;flex-shrink:0}
+header h1{font-size:19px;font-weight:700}
+header h1 .hl{color:var(--blue)}
+header p{font-size:11px;color:var(--dim);margin-top:2px}
+
+nav{background:var(--surf);border-bottom:1px solid var(--brd);
+  display:flex;flex-shrink:0;overflow-x:auto}
+nav button{background:none;border:none;border-bottom:3px solid transparent;
+  color:var(--dim);cursor:pointer;padding:10px 20px;font-size:12.5px;font-weight:500;
+  white-space:nowrap;display:flex;align-items:center;gap:8px;transition:.15s}
+nav button:hover{color:var(--txt)}
+nav button.on{color:var(--blue);border-bottom-color:var(--blue)}
+nav button .n{font-family:monospace;font-size:11px;background:var(--brd);
+  border-radius:3px;padding:1px 5px}
+nav button.on .n{background:var(--hl);color:#fff}
+
+#wrap{display:flex;flex:1;overflow:hidden;min-height:0}
+#cv{flex:1;position:relative;overflow:hidden;min-width:0}
+svg{display:block;overflow:visible}
+
+#panel{width:var(--panel);background:var(--surf);
+  border-left:1px solid var(--brd);display:flex;flex-direction:column;
+  overflow:hidden;flex-shrink:0}
+.ph{padding:13px;border-bottom:1px solid var(--brd);background:var(--bg)}
+.ph h3{font-size:13px;color:var(--blue);margin-bottom:3px}
+.ph .rf{font-family:monospace;font-size:10px;color:var(--dim)}
+.pb{padding:13px;font-size:12px;color:var(--dim);line-height:1.65;
+  overflow-y:auto;flex:1}
+.pb code{background:var(--bg);border:1px solid var(--brd);border-radius:3px;
+  padding:1px 4px;font-family:monospace;font-size:11px;color:var(--txt)}
+.pb strong{color:var(--txt)}
+.badge{display:inline-block;background:var(--hl);color:#fff;border-radius:10px;
+  padding:2px 8px;font-size:11px;font-weight:600;margin-bottom:7px}
+
+#lbl{position:absolute;top:13px;left:17px;pointer-events:none}
+#lbl h2{font-size:15px;font-weight:700}
+#lbl p{font-size:11px;color:var(--dim);margin-top:3px}
+#ctrl{position:absolute;bottom:13px;left:17px;display:flex;gap:7px;flex-wrap:wrap}
+.cb{background:var(--surf);border:1px solid var(--brd);color:var(--txt);
+  border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer;transition:.15s}
+.cb:hover{border-color:var(--blue)}
+.cb.p{background:var(--hl);border-color:var(--hl)}
+#leg{position:absolute;top:13px;right:13px;background:var(--surf);
+  border:1px solid var(--brd);border-radius:6px;padding:9px 13px;font-size:11px}
+.li{display:flex;align-items:center;gap:7px;margin-bottom:5px;color:var(--dim)}
+.li:last-child{margin-bottom:0}
+.dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+
+/* SVG node styles */
+.nd{cursor:pointer}
+.nd circle,.nd ellipse,.nd rect{transition:filter .15s}
+.nd:hover circle,.nd:hover ellipse,.nd:hover rect{filter:brightness(1.35)}
+.nd.sel circle,.nd.sel ellipse,.nd.sel rect{
+  stroke:#fff!important;stroke-width:3px!important}
+text{pointer-events:none;user-select:none}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="hl">axum</span> — A Story in Code <small style="font-size:13px;color:var(--dim);font-weight:400">(offline)</small></h1>
+  <p>Interaktywna eksploracja axum · działa bez internetu · kliknij węzeł, by zobaczyć szczegóły</p>
+</header>
+
+<nav id="nav">
+  <button class="on"  data-ch="arch">   <span class="n">01</span> Architektura crate'ów</button>
+  <button data-ch="journey"><span class="n">02</span> Podróż requestu</button>
+  <button data-ch="traits"> <span class="n">03</span> System traitów</button>
+  <button data-ch="errors"> <span class="n">04</span> Ścieżki błędów</button>
+</nav>
+
+<div id="wrap">
+  <div id="cv"><svg id="viz"></svg>
+    <div id="lbl"></div>
+    <div id="ctrl"></div>
+    <div id="leg"></div>
+  </div>
+  <aside id="panel">
+    <div class="ph"><h3 id="dt">Wybierz węzeł</h3><div class="rf" id="dr"></div></div>
+    <div class="pb" id="db"><p>Kliknij dowolny węzeł, aby poznać szczegóły tego komponentu axum.</p></div>
+  </aside>
+</div>
+
+<script>
+// ─── helpers ─────────────────────────────────────────────────────────────────
+const NS = 'http://www.w3.org/2000/svg';
+const viz = document.getElementById('viz');
+
+function mkEl(tag, attrs = {}) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+function add(parent, tag, attrs = {}, text) {
+  const e = mkEl(tag, attrs);
+  if (text !== undefined) e.textContent = text;
+  parent.appendChild(e);
+  return e;
+}
+function dims() {
+  const r = document.getElementById('cv').getBoundingClientRect();
+  return { W: Math.max(r.width  || window.innerWidth  - 280, 400),
+           H: Math.max(r.height || window.innerHeight - 110, 300) };
+}
+function detail(title, ref, html) {
+  document.getElementById('dt').textContent  = title;
+  document.getElementById('dr').textContent  = ref || '';
+  document.getElementById('db').innerHTML    = html;
+}
+function setLabel(t, s) {
+  document.getElementById('lbl').innerHTML = `<h2>${t}</h2><p>${s}</p>`;
+}
+function setLegend(items) {
+  document.getElementById('leg').innerHTML = items.map(i =>
+    `<div class="li"><div class="dot" style="background:${i.c}"></div>${i.l}</div>`).join('');
+}
+function setCtrl(buttons) {
+  const el = document.getElementById('ctrl');
+  el.innerHTML = '';
+  buttons.forEach(b => {
+    const btn = document.createElement('button');
+    btn.className = 'cb ' + (b.p ? 'p' : '');
+    btn.textContent = b.lbl;
+    btn.onclick = b.fn;
+    el.appendChild(btn);
+  });
+}
+
+// Arrow markers
+function ensureDefs() {
+  let d = viz.querySelector('defs');
+  if (!d) { d = mkEl('defs'); viz.insertBefore(d, viz.firstChild); }
+  return d;
+}
+function mkArrow(id, color) {
+  const defs = ensureDefs();
+  if (defs.querySelector('#' + id)) return;
+  const m = add(defs, 'marker', { id, viewBox:'0 -5 10 10',
+    refX:'9', refY:'0', markerWidth:'6', markerHeight:'6', orient:'auto' });
+  add(m, 'path', { d:'M0,-5L10,0L0,5', fill: color || '#555' });
+}
+
+// Multi-line SVG text helper (centres lines vertically)
+function multiText(parent, lines, x, y, size, fill, bold) {
+  const lh = size * 1.3;
+  const top = y - ((lines.length - 1) / 2) * lh;
+  lines.forEach((ln, i) => {
+    add(parent, 'text', {
+      x, y: top + i * lh,
+      'text-anchor': 'middle', 'dominant-baseline': 'central',
+      'font-size': size, fill, 'font-weight': bold ? '700' : '400',
+    }, ln);
+  });
+}
+
+// Selection state
+let selectedNode = null;
+function selectNode(gEl) {
+  if (selectedNode) selectedNode.classList.remove('sel');
+  selectedNode = gEl;
+  if (gEl) gEl.classList.add('sel');
+}
+
+// clear everything
+let _raf = null;
+function clearScene() {
+  if (_raf) { cancelAnimationFrame(_raf); _raf = null; }
+  viz.innerHTML = '';
+  document.getElementById('ctrl').innerHTML = '';
+  selectedNode = null;
+  detail('Wybierz węzeł', '', '<p>Kliknij dowolny węzeł, aby poznać szczegóły tego komponentu axum.</p>');
+}
+
+// ─── Force simulation ─────────────────────────────────────────────────────────
+// Minimal spring-repulsion simulation, no dependencies.
+function runSim(nodes, links, W, H, onTick, steps = 200) {
+  // resolve link references
+  const nm = Object.fromEntries(nodes.map(n => [n.id, n]));
+  const resolvedLinks = links.map(l => ({
+    ...l,
+    src: nm[typeof l.s === 'string' ? l.s : l.s.id] || l.s,
+    tgt: nm[typeof l.t === 'string' ? l.t : l.t.id] || l.t,
+  })).filter(l => l.src && l.tgt);
+
+  nodes.forEach(n => { n.vx = n.vx||0; n.vy = n.vy||0; });
+  let alpha = 1, count = 0;
+
+  function tick() {
+    if (count++ > steps || alpha < 0.02) { onTick(nodes); return; }
+
+    // Repulsion between all pairs
+    for (let i = 0; i < nodes.length - 1; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        const dx = b.x - a.x || 0.1, dy = b.y - a.y || 0.1;
+        const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+        const minD = (a.r||30) + (b.r||30) + 20;
+        if (dist < minD * 2.5) {
+          const f = Math.min(600, 300 * minD / dist) / dist * alpha;
+          if (!a.pinned) { a.vx -= dx*f; a.vy -= dy*f; }
+          if (!b.pinned) { b.vx += dx*f; b.vy += dy*f; }
+        }
+      }
+    }
+
+    // Springs on links
+    for (const lk of resolvedLinks) {
+      const a = lk.src, b = lk.tgt;
+      const dx = b.x - a.x || 0.1, dy = b.y - a.y || 0.1;
+      const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+      const target = lk.dist || ((a.r||30) + (b.r||30)) * 3;
+      const f = (dist - target) * 0.035 * alpha;
+      const fx = dx/dist*f, fy = dy/dist*f;
+      if (!a.pinned) { a.vx += fx; a.vy += fy; }
+      if (!b.pinned) { b.vx -= fx; b.vy -= fy; }
+    }
+
+    // Weak centre gravity
+    for (const n of nodes) {
+      if (n.pinned) continue;
+      n.vx += (W/2 - n.x) * 0.005 * alpha;
+      n.vy += (H/2 - n.y) * 0.005 * alpha;
+    }
+
+    // Integrate with damping
+    for (const n of nodes) {
+      if (n.pinned) { n.vx = 0; n.vy = 0; continue; }
+      n.vx *= 0.80; n.vy *= 0.80;
+      n.x += n.vx; n.y += n.vy;
+      // clamp to canvas
+      const pad = (n.r||30) + 8;
+      n.x = Math.max(pad, Math.min(W - pad, n.x));
+      n.y = Math.max(pad, Math.min(H - pad, n.y));
+    }
+
+    alpha -= 0.006;
+    onTick(nodes);
+    _raf = requestAnimationFrame(tick);
+  }
+  _raf = requestAnimationFrame(tick);
+}
+
+// ─── CHAPTER 1: ARCHITECTURE ─────────────────────────────────────────────────
+const archNodes = [
+  { id:'axum',        lbl:'axum',        t:'i', r:46, badge:'workspace crate',
+    desc:'Główny crate frameworku (v0.8.9). Zawiera Router, wszystkie extractory, middleware, WebSocket i serve(). To jedyny crate, który większość aplikacji importuje.',
+    file:'axum/src/lib.rs' },
+  { id:'axum-core',   lbl:'axum-core',   t:'i', r:30, badge:'workspace crate',
+    desc:'Stabilne definicje traitów (v0.5.6): FromRequest, FromRequestParts, IntoResponse, Body. Autorzy bibliotek zależą od tego crate niezależnie od axum, żeby nie „przywiązywać" użytkowników do konkretnej wersji frameworku.',
+    file:'axum-core/src/lib.rs' },
+  { id:'axum-extra',  lbl:'axum-extra',  t:'i', r:26, badge:'workspace crate',
+    desc:'Opcjonalne baterie (v0.12.6), wszystkie za flagami Cargo: TypedPath, cookie jars, TypedHeader, Protobuf, JSON Lines.',
+    file:'axum-extra/src/lib.rs' },
+  { id:'axum-macros', lbl:'axum-macros', t:'m', r:21, badge:'proc-macro',
+    desc:'Crate proc-macro (v0.5.1): #[debug_handler] daje lepsze błędy kompilacji, #[derive(FromRequest/FromRequestParts/TypedPath)]. Brak zależności runtime od axum — tylko syn, quote, proc-macro2.',
+    file:'axum-macros/src/lib.rs' },
+  { id:'tokio',       lbl:'tokio',       t:'e', r:28, badge:'zewnętrzny dep',
+    desc:'Async runtime (v1.44). Dostarcza TcpListener, task spawning, sync primitives. axum::serve() wywołuje tokio::spawn per połączenie.',
+    file:'external' },
+  { id:'hyper',       lbl:'hyper',       t:'e', r:24, badge:'zewnętrzny dep',
+    desc:'Implementacja HTTP/1.1 + HTTP/2 (v1.4.0). Czyta surowe bajty TCP i tworzy Request<Incoming>. axum łączy go z Tower przez hyper-util.',
+    file:'external' },
+  { id:'hyper-util',  lbl:'hyper-util',  t:'e', r:17, badge:'zewnętrzny dep',
+    desc:'Crate pomocniczy (v0.1.4): TowerToHyperService, auto::Builder (negocjacja HTTP/1 vs HTTP/2), TokioIo.',
+    file:'external' },
+  { id:'tower',       lbl:'tower',       t:'e', r:25, badge:'zewnętrzny dep',
+    desc:'Abstrakcje Service + Layer (v0.5.2). Każdy router, handler i middleware w axum to Tower Service. Umożliwia kompozycję middleware jak cebula.',
+    file:'external' },
+  { id:'tower-http',  lbl:'tower-http',  t:'e', r:19, badge:'zewnętrzny dep',
+    desc:'Gotowe middleware HTTP (v0.6.8): TraceLayer, CorsLayer, CompressionLayer, BasicAuth i wiele innych.',
+    file:'external' },
+  { id:'matchit',     lbl:'matchit',     t:'e', r:17, badge:'zewnętrzny dep',
+    desc:'Radix-tree router ścieżek (v0.9.2). Dopasowywanie URI w O(log n) z przechwytywaniem {param} i {*wildcard}. PathRouter opakowuje to wewnętrznie.',
+    file:'external' },
+  { id:'serde',       lbl:'serde',       t:'e', r:21, badge:'zewnętrzny dep',
+    desc:'Framework serializacji (v1.0.221). Używany przez Path<T>, Query<T>, Json<T>, Form<T> do deserializacji danych requestu do typowanych wartości Rust.',
+    file:'external' },
+  { id:'serde_json',  lbl:'serde_json',  t:'e', r:16, badge:'zewnętrzny dep',
+    desc:'Kodek JSON (v1.0.29). Używany przez ekstraktor Json<T> (deserializacja body) i response Json<T> (serializacja wartości zwracanej przez handler).',
+    file:'external' },
+  { id:'http',        lbl:'http',        t:'e', r:16, badge:'zewnętrzny dep',
+    desc:'Definicje typów HTTP (v1.0.0): Request, Response, Method, StatusCode, HeaderMap, Uri. axum re-eksportuje większość z nich.',
+    file:'external' },
+  { id:'bytes',       lbl:'bytes',       t:'e', r:14, badge:'zewnętrzny dep',
+    desc:'Zero-copy bufory bajtów (v1.7). Bytes i BytesMut pojawiają się w całym axum do wydajnej obsługi body bez zbędnego kopiowania.',
+    file:'external' },
+];
+const archLinks = [
+  {s:'axum-core',  t:'axum',       lbl:'core traits'},
+  {s:'axum',       t:'axum-extra', lbl:'extends'},
+  {s:'tokio',      t:'axum',       lbl:'runtime'},
+  {s:'hyper',      t:'axum',       lbl:'HTTP'},
+  {s:'hyper-util', t:'axum',       lbl:'bridge'},
+  {s:'tower',      t:'axum',       lbl:'Service/Layer'},
+  {s:'tower',      t:'axum-core',  lbl:''},
+  {s:'tower-http', t:'axum',       lbl:'middleware'},
+  {s:'matchit',    t:'axum',       lbl:'routing'},
+  {s:'serde',      t:'axum',       lbl:'serde'},
+  {s:'serde',      t:'axum-core',  lbl:''},
+  {s:'serde_json', t:'axum',       lbl:'JSON'},
+  {s:'http',       t:'axum',       lbl:'types'},
+  {s:'http',       t:'axum-core',  lbl:''},
+  {s:'bytes',      t:'axum',       lbl:''},
+  {s:'bytes',      t:'axum-core',  lbl:''},
+  {s:'hyper',      t:'axum-core',  lbl:''},
+];
+const archColor = { i:'#58a6ff', e:'#3fb950', m:'#ffa657' };
+
+function renderArch() {
+  clearScene();
+  const { W, H } = dims();
+  viz.setAttribute('width', W); viz.setAttribute('height', H);
+  setLabel('Architektura Crate\'ów', 'Cztery crate\'y i zależności — kliknij węzeł, by zbadać');
+  setLegend([
+    {c:'#58a6ff', l:'crate workspace axum'},
+    {c:'#ffa657', l:'crate proc-macro'},
+    {c:'#3fb950', l:'zewnętrzna zależność'},
+  ]);
+  setCtrl([]);
+  mkArrow('a-arch', '#555');
+
+  // Pre-position: workspace in inner ring, external in outer ring
+  const intern = archNodes.filter(n => n.t !== 'e');
+  const extern = archNodes.filter(n => n.t === 'e');
+  const cx = W/2, cy = H/2;
+  const ri = Math.min(W, H) * 0.18;
+  const ro = Math.min(W, H) * 0.40;
+
+  // axum at center
+  const axumN = intern.find(n => n.id === 'axum');
+  axumN.x = cx; axumN.y = cy;
+  const others = intern.filter(n => n.id !== 'axum');
+  others.forEach((n, i) => {
+    const a = (i / others.length) * 2 * Math.PI - Math.PI / 2;
+    n.x = cx + Math.cos(a) * ri;
+    n.y = cy + Math.sin(a) * ri;
+  });
+  extern.forEach((n, i) => {
+    const a = (i / extern.length) * 2 * Math.PI - Math.PI / 6;
+    n.x = cx + Math.cos(a) * ro;
+    n.y = cy + Math.sin(a) * ro;
+  });
+
+  // SVG layers
+  const lnG = add(viz, 'g');
+  const ndG = add(viz, 'g');
+
+  const nodeMap = Object.fromEntries(archNodes.map(n => [n.id, n]));
+
+  // Draw links (initially at pre-positions)
+  const lineEls = archLinks.map(lk => {
+    const a = nodeMap[lk.s], b = nodeMap[lk.t];
+    return add(lnG, 'line', {
+      x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+      stroke: '#333', 'stroke-width': '1.2', 'marker-end': 'url(#a-arch)',
+    });
+  });
+
+  // Draw nodes
+  const gEls = {};
+  archNodes.forEach(n => {
+    const g = add(ndG, 'g', { class: 'nd', transform: `translate(${n.x},${n.y})` });
+    gEls[n.id] = g;
+    add(g, 'circle', {
+      r: n.r, fill: archColor[n.t] + '1a',
+      stroke: archColor[n.t], 'stroke-width': '2',
+    });
+    add(g, 'text', {
+      'text-anchor': 'middle', 'dominant-baseline': 'central',
+      'font-size': Math.min(12, n.r * 0.52),
+      fill: archColor[n.t], 'font-weight': n.t === 'i' ? '700' : '400',
+    }, n.lbl);
+    g.addEventListener('click', () => {
+      selectNode(g);
+      detail(n.lbl, n.file, `<span class="badge">${n.badge}</span><p>${n.desc}</p>`);
+    });
+    // Drag
+    let dragging = false, ox = 0, oy = 0;
+    g.addEventListener('mousedown', e => {
+      dragging = true; n.pinned = true;
+      const svgRect = viz.getBoundingClientRect();
+      ox = e.clientX - svgRect.left - n.x;
+      oy = e.clientY - svgRect.top  - n.y;
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const svgRect = viz.getBoundingClientRect();
+      n.x = e.clientX - svgRect.left - ox;
+      n.y = e.clientY - svgRect.top  - oy;
+      updatePositions();
+    });
+    window.addEventListener('mouseup', () => {
+      if (dragging) { dragging = false; n.pinned = false; }
+    });
+  });
+
+  function updatePositions() {
+    archNodes.forEach(n => {
+      gEls[n.id].setAttribute('transform', `translate(${n.x},${n.y})`);
+    });
+    lineEls.forEach((le, i) => {
+      const a = nodeMap[archLinks[i].s], b = nodeMap[archLinks[i].t];
+      le.setAttribute('x1', a.x); le.setAttribute('y1', a.y);
+      le.setAttribute('x2', b.x); le.setAttribute('y2', b.y);
+    });
+  }
+
+  // Run simulation
+  runSim(archNodes, archLinks.map(l => ({s:l.s, t:l.t})), W, H, () => updatePositions());
+}
+
+// ─── CHAPTER 2: REQUEST JOURNEY ───────────────────────────────────────────────
+const jNodes = [
+  { id:'client',  lbl:'HTTP\nClient',         c:'#8b949e',
+    desc:'Przeglądarka, curl lub klient API wysyłający request HTTP przez TCP.',  file:'(zewnętrzny)' },
+  { id:'tcp',     lbl:'TcpListener\n(tokio)', c:'#58a6ff',
+    desc:'tokio::net::TcpListener::accept() zwraca (TcpStream, SocketAddr). axum::serve() wywołuje to w pętli. Każde połączenie dostaje osobny Tokio task.',  file:'axum/src/serve/mod.rs:559' },
+  { id:'serve',   lbl:'axum::serve',          c:'#58a6ff',
+    desc:'Punkt wejściowy frameworku. Przyjmuje TcpListener i Router<()>. Uruchamia hyper_util auto::Builder dla negocjacji HTTP/1 vs HTTP/2.',  file:'axum/src/serve/mod.rs:103' },
+  { id:'hyper',   lbl:'hyper\n(parse HTTP)',  c:'#3fb950',
+    desc:'Zewnętrzny crate. Czyta surowe bajty TCP i parsuje je do Request<Incoming>. Obsługuje Content-Length, chunked encoding, HTTP/2 multiplexing.',  file:'hyper v1.4.0' },
+  { id:'mw',      lbl:'Tower\nMiddleware',    c:'#ffa657',
+    desc:'Opcjonalne warstwy przez .layer(): TraceLayer, CorsLayer, CompressionLayer, itd. Ostatnie .layer() jest najbardziej zewnętrzne (pierwsze widzi request, ostatnie widzi response).',  file:'axum/src/middleware/' },
+  { id:'router',  lbl:'Router',               c:'#58a6ff',
+    desc:'Router<()> implementuje Tower Service. Owija Arc<RouterInner> dla taniego klonowania per-połączenie. Wywołuje call_with_state(req, state).',  file:'axum/src/routing/mod.rs:86' },
+  { id:'path',    lbl:'PathRouter\n(matchit)',c:'#79c0ff',
+    desc:'Uruchamia lookup matchit na uri.path(). Po dopasowaniu wstawia UrlParams, MatchedPath, OriginalUri do request.extensions(). Zwraca RouteId → Endpoint.',  file:'axum/src/routing/path_router.rs:342' },
+  { id:'method',  lbl:'MethodRouter',         c:'#79c0ff',
+    desc:'Dispatchuje po metodzie HTTP (GET/POST/PUT/…) przez makro call! rozwijające się do łańcucha if-ów. Buduje nagłówek Allow dla odpowiedzi 405.',  file:'axum/src/routing/method_routing.rs:1167' },
+  { id:'handler', lbl:'Handler::call',        c:'#d2a8ff',
+    desc:'Makro impl_handler!: (1) dzieli Request na (parts, body), (2) wywołuje każdy FromRequestParts, (3) odtwarza Request, (4) wywołuje FromRequest, (5) wywołuje user async fn.',  file:'axum/src/handler/mod.rs:238' },
+  { id:'extract', lbl:'Extractory',           c:'#79c0ff',
+    desc:'FromRequestParts: Path, Query, State, Extension — pożyczają &mut Parts. FromRequest: Json, Form, Bytes — konsumują body (muszą być ostatnim argumentem). Każdy zwraca Ok(value) lub Err(rejection).',  file:'axum-core/src/extract/mod.rs' },
+  { id:'userfn',  lbl:'user async fn',        c:'#3fb950',
+    desc:'Twoja logika aplikacyjna. Otrzymuje typowane wyekstrahowane wartości. Zwraca dowolny typ implementujący IntoResponse: krotkę, Json<T>, StatusCode, Html<T> lub własny typ.',  file:'twój kod' },
+  { id:'resp',    lbl:'IntoResponse\n→ hyper',c:'#ffa657',
+    desc:'into_response() konwertuje typ zwracany przez handler do HTTP Response. Json serializuje przez serde_json z Content-Type: application/json. Hyper opakowuje to w bajty HTTP/1.1 lub HTTP/2.',  file:'axum-core/src/response/mod.rs' },
+];
+
+function renderJourney() {
+  clearScene();
+  const { W, H } = dims();
+  viz.setAttribute('width', W); viz.setAttribute('height', H);
+  setLabel('Podróż Requestu', 'Wybierz scenariusz do animacji — kliknij węzeł po szczegóły');
+  setLegend([
+    {c:'#58a6ff', l:'axum internals'},
+    {c:'#3fb950', l:'zewnętrzny / twój kod'},
+    {c:'#ffa657', l:'middleware / response'},
+    {c:'#ffd700', l:'animowany pakiet requestu'},
+  ]);
+  mkArrow('a-j', '#444');
+
+  const N = jNodes.length;
+  const BW = 108, BH = 50;
+  const padX = 36;
+  const step = (W - padX*2 - BW) / (N - 1);
+  const midY = H / 2;
+
+  const pos = jNodes.map((d, i) => ({
+    ...d,
+    cx: padX + i * step + BW/2,
+    cy: midY + (i % 2 === 0 ? -38 : 38),
+  }));
+
+  // Connector lines
+  const segG = add(viz, 'g');
+  for (let i = 0; i < pos.length - 1; i++) {
+    const a = pos[i], b = pos[i+1];
+    add(segG, 'line', {
+      x1: a.cx, y1: a.cy, x2: b.cx, y2: b.cy,
+      stroke: '#2d3748', 'stroke-width': '1.5', 'marker-end': 'url(#a-j)',
+    });
+  }
+
+  // Boxes
+  const gEls2 = [];
+  pos.forEach(d => {
+    const g = add(viz, 'g', { class:'nd', transform:`translate(${d.cx - BW/2},${d.cy - BH/2})` });
+    gEls2.push(g);
+    add(g, 'rect', {
+      width:BW, height:BH, rx:'6',
+      fill: d.c + '18', stroke: d.c, 'stroke-width':'1.5',
+    });
+    const lines = d.lbl.split('\n');
+    lines.forEach((ln, i) => {
+      add(g, 'text', {
+        x: BW/2,
+        y: BH/2 + (i - (lines.length-1)/2) * 14,
+        'text-anchor':'middle', 'dominant-baseline':'central',
+        'font-size':'10.5', fill: d.c,
+      }, ln);
+    });
+    g.addEventListener('click', () => {
+      selectNode(g);
+      detail(d.lbl.replace('\n',' '), d.file, `<p>${d.desc}</p>`);
+    });
+  });
+
+  // Animated packet
+  const pkt = add(viz, 'circle', {
+    r:'8', fill:'#ffd700', opacity:'0',
+    style:'filter:drop-shadow(0 0 7px #ffd700)',
+  });
+
+  let animating = false;
+  function animatePath(ids, color, onEnd) {
+    if (animating) return;
+    animating = true;
+    const pts = ids.map(id => pos.find(p => p.id === id));
+    pkt.setAttribute('fill', color);
+    pkt.setAttribute('cx', pts[0].cx);
+    pkt.setAttribute('cy', pts[0].cy);
+    pkt.setAttribute('opacity', '0.95');
+
+    let seg = 0;
+    let startTime = null;
+    const SPEED = 260; // px per second
+
+    function frame(now) {
+      if (!startTime) startTime = now;
+      if (seg >= pts.length - 1) {
+        pkt.setAttribute('opacity', '0');
+        animating = false;
+        if (onEnd) onEnd();
+        return;
+      }
+      const a = pts[seg], b = pts[seg+1];
+      const dist = Math.hypot(b.cx - a.cx, b.cy - a.cy);
+      const dur = dist / SPEED * 1000;
+      const t = Math.min(1, (now - startTime) / dur);
+      pkt.setAttribute('cx', a.cx + (b.cx - a.cx) * t);
+      pkt.setAttribute('cy', a.cy + (b.cy - a.cy) * t);
+      if (t >= 1) { seg++; startTime = now; }
+      _raf = requestAnimationFrame(frame);
+    }
+    _raf = requestAnimationFrame(frame);
+  }
+
+  const allIds = pos.map(p => p.id);
+  setCtrl([
+    { lbl:'▶ Happy Path (200)', p:true, fn:() => {
+        animatePath(allIds, '#ffd700');
+        detail('200 OK — Happy Path','handler → IntoResponse',
+          '<p>Wszystkie extractory zwracają Ok. User async fn uruchamia się. Wartość zwrotna konwertowana do HTTP Response przez <code>IntoResponse</code>. Hyper zapisuje bajty do socketu.</p>');
+    }},
+    { lbl:'▶ 404 Not Found', p:false, fn:() => {
+        animatePath(['client','tcp','serve','hyper','mw','router','path'], '#f85149');
+        detail('404 Not Found','path_router.rs:342',
+          '<p>matchit nie znajduje pasującej trasy. <code>catch_all_fallback.call_with_state(req, ())</code> wywoływany. Domyślnie: prosty 404. Nadpisz przez <code>.fallback(handler)</code>.</p>');
+    }},
+    { lbl:'▶ 405 Method Not Allowed', p:false, fn:() => {
+        animatePath(['client','tcp','serve','hyper','mw','router','path','method'], '#ffa657');
+        detail('405 Method Not Allowed','method_routing.rs:1167',
+          '<p>Ścieżka dopasowana, ale brak handlera dla tej metody HTTP. MethodRouter zwraca <code>405</code> z nagłówkiem <code>Allow</code> listującym wszystkie zarejestrowane metody dla tej trasy.</p>');
+    }},
+    { lbl:'▶ Błąd Extractora', p:false, fn:() => {
+        animatePath(['client','tcp','serve','hyper','mw','router','path','method','handler','extract'], '#d2a8ff');
+        detail('400/415/422 — Extractor Rejection','axum-core/src/extract/mod.rs',
+          '<p>Pierwszy nieskuteczny ekstraktor wywołuje <code>rejection.into_response()</code>. User fn nigdy nie jest wywoływany. <code>Path&lt;T&gt;</code> → 400, zły Content-Type dla Json → 415, zły JSON → 422.</p>');
+    }},
+  ]);
+}
+
+// ─── CHAPTER 3: TRAIT SYSTEM ─────────────────────────────────────────────────
+const traitData = [
+  // [id, label, type, col, gx, gy, desc, file]
+  ['service', 'tower::Service\n<Request>',    'trait',  '#ffa657', 4,  0,
+   'Fundamentalna abstrakcja kompozycji. poll_ready() + call(req) → Future<Response>. Router, Route i HandlerService implementują ten trait.', 'tower-service v0.3'],
+  ['layer',   'tower::Layer\n<S>',            'trait',  '#ffa657', 7,  0,
+   'layer(self, inner: S) → Self::Service. Prymityw kompozycji middleware. Każde .layer() w axum wywołuje ten trait i owija istniejący Service.', 'tower-layer v0.3.2'],
+  ['handler', 'Handler\n<T, S>',              'trait',  '#ffa657', 1,  0,
+   'Implementowany dla wszystkich async fn o arności 0–16 przez makro impl_handler!. T koduje listę typów extraktorów. call(self, Request, S) → Future.', 'axum/src/handler/mod.rs:100'],
+  ['frp',     'FromRequest\nParts<S>',        'trait',  '#ffa657', -2, 0,
+   'Extractory pożyczające &mut Parts (nagłówki, URI, extensions). Wiele per handler, dowolna pozycja. Nie dotykają body. Typ Rejection musi impl IntoResponse.', 'axum-core/src/extract/mod.rs'],
+  ['fr',      'FromRequest\n<S>',             'trait',  '#ffa657', 0,  0,
+   'Extractory konsumujące cały Request (wraz z body). Tylko JEDEN per handler, musi być OSTATNIM parametrem. Typ Rejection musi impl IntoResponse.', 'axum-core/src/extract/mod.rs'],
+  ['ir',      'IntoResponse',                 'trait',  '#ffa657', 3,  0,
+   'into_response(self) → Response. Implementowany dla StatusCode, Json<T>, Html<T>, Redirect, String, Bytes, krotek, Result<T,E>.', 'axum-core/src/response/mod.rs'],
+  ['rsvc',    'Router<()>',                   'impl',   '#58a6ff', 4,  1,
+   'Tylko Router<()> — stan w pełni dostarczony przez .with_state(s) — implementuje Service. Router<S> z S≠() nie ma impl Service. Wymuszane przez kompilator Rust.', 'axum/src/routing/mod.rs:599'],
+  ['route',   'Route',                        'impl',   '#58a6ff', 5,  1,
+   'Type-erased Tower Service dla pojedynczego endpointu. Owija BoxCloneService. Tworzony przez BoxedHandler::into_route(state) gdy wywołane .with_state().', 'axum/src/routing/route.rs'],
+  ['hsvc',    'HandlerService\n<H,T,S>',      'impl',   '#d2a8ff', 1,  1,
+   'Owija Handler jako Tower Service wielokrotnego użytku. Tworzony przez handler.into_service(). Przechowywany jako BoxedIntoRoute<S> przed dostarczeniem stanu.', 'axum/src/handler/service.rs'],
+  ['pex',     'Path<T>',                      'frp',    '#79c0ff', -4, 1,
+   'Czyta UrlParams z request.extensions() (wstawione przez PathRouter po matchit). Deserializuje przechwycone wartości do T przez serde. Zwraca 400 przy błędzie deserializacji.', 'axum/src/extract/path.rs'],
+  ['sex',     'State<T>',                     'frp',    '#79c0ff', -3, 1,
+   'Czyta stan aplikacji T z request.extensions() (wstawiony przez .with_state()). T musi być Clone + Send + Sync + \'static.', 'axum/src/extract/state.rs'],
+  ['qex',     'Query<T>',                     'frp',    '#79c0ff', -2, 1,
+   'Parsuje query string URI do T przez serde_html_form. Zwraca 400 QueryRejection przy błędzie parsowania.', 'axum/src/extract/query.rs'],
+  ['jex',     'Json<T>',                      'fr',     '#79c0ff', 0,  1,
+   'Sprawdza Content-Type: application/json (→ 415), buforuje body, deserializuje przez serde_json (→ 422). Implementuje też IntoResponse — pisze JSON z nagłówkiem application/json.', 'axum/src/json.rs'],
+  ['bex',     'Bytes',                        'fr',     '#79c0ff', 1,  2,
+   'Buforuje całe body requestu do wartości Bytes. Najprostszy ekstraktor body — brak sprawdzania content-type, brak deserializacji.', 'axum-core'],
+  ['jresp',   'Json<T> resp',                 'ir',     '#3fb950', 2,  1,
+   'Json<T> impl IntoResponse: wywołuje serde_json::to_writer, ustawia Content-Type: application/json, domyślnie 200 OK. Połącz z StatusCode w krotce dla innych kodów.', 'axum/src/json.rs:197'],
+  ['sresp',   'StatusCode',                   'ir',     '#3fb950', 3,  1,
+   'Bezpośrednio implementuje IntoResponse z pustym body. Przydatne dla 204 No Content, 201 Created. Połącz z body: (StatusCode::CREATED, Json(data)).', 'axum-core/src/response/'],
+];
+const traitLinks2 = [
+  ['rsvc','service','impl (S=())'],['route','service','impl'],['hsvc','service','impl'],
+  ['handler','hsvc','→ into_service()'],['handler','frp','auto-extracts'],
+  ['handler','fr','last arg'],['handler','ir','return must impl'],
+  ['pex','frp','impl'],['sex','frp','impl'],['qex','frp','impl'],
+  ['jex','fr','impl (body)'],['bex','fr','impl (body)'],
+  ['jresp','ir','impl'],['sresp','ir','impl'],
+  ['layer','service','wraps → Service'],
+];
+const traitColorMap = { trait:'#ffa657', impl:'#58a6ff', frp:'#79c0ff', fr:'#79c0ff', ir:'#3fb950' };
+
+function renderTraits() {
+  clearScene();
+  const { W, H } = dims();
+  viz.setAttribute('width', W); viz.setAttribute('height', H);
+  setLabel('System Traitów', 'Cztery core traity łączą cały framework — kliknij węzeł, by zbadać');
+  setLegend([
+    {c:'#ffa657', l:'trait (interfejs)'},
+    {c:'#58a6ff', l:'impl (Router / Route)'},
+    {c:'#79c0ff', l:'impl (ekstraktor)'},
+    {c:'#3fb950', l:'impl (response)'},
+    {c:'#d2a8ff', l:'impl (handler bridge)'},
+  ]);
+  setCtrl([]);
+  mkArrow('a-t','#555');
+
+  const cols = 12, rows = 3;
+  const cw = (W - 80) / cols;
+  const rh = (H - 60) / rows;
+
+  const nodes = traitData.map(([id,lbl,t,col,gx,gy,desc,file]) => ({
+    id, lbl, t, col, gx, gy, desc, file, r: 54,
+    x: 40 + (gx + 4) * cw + cw/2,
+    y: 40 + gy * rh + rh/2,
+  }));
+  const nm = Object.fromEntries(nodes.map(n => [n.id, n]));
+
+  const lnG = add(viz, 'g');
+  const ltG = add(viz, 'g');
+  const ndG = add(viz, 'g');
+
+  const linkEls3 = traitLinks2.map(([s,t,lbl]) => {
+    const a = nm[s], b = nm[t];
+    const le = add(lnG, 'line', {
+      x1:a.x,y1:a.y,x2:b.x,y2:b.y,
+      stroke:'#2d3748','stroke-width':'1.2',
+      'stroke-dasharray': lbl.includes('impl') ? '5 3' : 'none',
+      'marker-end':'url(#a-t)',
+    });
+    const te = add(ltG, 'text', {
+      x:(a.x+b.x)/2, y:(a.y+b.y)/2 - 5,
+      'text-anchor':'middle','font-size':'9','fill':'#444',
+    }, lbl);
+    return { le, te, s, t: t };
+  });
+
+  const gEls3 = {};
+  nodes.forEach(n => {
+    const g = add(ndG, 'g', { class:'nd', transform:`translate(${n.x},${n.y})` });
+    gEls3[n.id] = g;
+    add(g, 'ellipse', {
+      rx:'54', ry:'21',
+      fill: n.col + '18', stroke: n.col, 'stroke-width': n.t==='trait' ? '2.2' : '1.5',
+    });
+    const lines = n.lbl.split('\n');
+    lines.forEach((ln, i) => {
+      add(g, 'text', {
+        x:'0', y:(i-(lines.length-1)/2)*12.5,
+        'text-anchor':'middle','dominant-baseline':'central',
+        'font-size':'10', fill:n.col,
+        'font-weight': n.t==='trait'?'700':'400',
+      }, ln);
+    });
+    g.addEventListener('click',() => {
+      selectNode(g);
+      detail(n.lbl.replace('\n',' '), n.file, `<span class="badge">${n.t}</span><p>${n.desc}</p>`);
+    });
+    // Drag
+    let drag=false, ox=0, oy=0;
+    g.addEventListener('mousedown',e=>{
+      drag=true; n.pinned=true;
+      const r=viz.getBoundingClientRect();
+      ox=e.clientX-r.left-n.x; oy=e.clientY-r.top-n.y; e.preventDefault();
+    });
+    window.addEventListener('mousemove',e=>{
+      if(!drag)return;
+      const r=viz.getBoundingClientRect();
+      n.x=e.clientX-r.left-ox; n.y=e.clientY-r.top-oy;
+      update3();
+    });
+    window.addEventListener('mouseup',()=>{if(drag){drag=false;n.pinned=false;}});
+  });
+
+  function update3() {
+    nodes.forEach(n => gEls3[n.id].setAttribute('transform',`translate(${n.x},${n.y})`));
+    traitLinks2.forEach(([s,t], i) => {
+      const a=nm[s], b=nm[t], {le,te}=linkEls3[i];
+      le.setAttribute('x1',a.x);le.setAttribute('y1',a.y);
+      le.setAttribute('x2',b.x);le.setAttribute('y2',b.y);
+      te.setAttribute('x',(a.x+b.x)/2);te.setAttribute('y',(a.y+b.y)/2-5);
+    });
+  }
+
+  const simLinks = traitLinks2.map(([s,t])=>({s,t,dist:110}));
+  runSim(nodes, simLinks, W, H, ()=>update3(), 150);
+}
+
+// ─── CHAPTER 4: ERROR PATHS ───────────────────────────────────────────────────
+const errTree = {
+  id:'req', lbl:'HTTP Request', c:'#58a6ff',
+  desc:'Każdy request HTTP odebrany przez axum przechodzi przez to drzewo decyzyjne.',
+  ch:[
+    { id:'p?', lbl:'Path match?\n(matchit)', c:'#ffa657',
+      desc:'PathRouter uruchamia matchit na uri.path(). Albo RouteId zostaje znaleziony, albo MatchError::NotFound.',
+      ch:[
+        { id:'pok', lbl:'✓ Ścieżka znaleziona', c:'#3fb950',
+          desc:'RouteId rozwiązany. UrlParams, MatchedPath, OriginalUri wstawione do request.extensions().',
+          ch:[
+            { id:'m?', lbl:'Method match?\n(call! macro)', c:'#ffa657',
+              desc:'MethodRouter sprawdza req.method() względem zarejestrowanych handlerów przez makro call!.',
+              ch:[
+                { id:'mok', lbl:'✓ Metoda znaleziona', c:'#3fb950',
+                  desc:'BoxedHandler::into_route(state) upiecza stan. Handler::call() zaczyna łańcuch extraktorów.',
+                  ch:[
+                    { id:'eok',  lbl:'✓ Extractory OK',      c:'#3fb950', outcome:'200 OK (lub status handlera)',
+                      desc:'User async fn wywołany z typowanymi wartościami. Wartość zwrotna konwertowana przez IntoResponse.', ch:[] },
+                    { id:'efail',lbl:'✗ Ekstraktor zawodzi', c:'#f85149', outcome:'400 / 415 / 422',
+                      desc:'Pierwszy nieskuteczny ekstraktor: rejection.into_response() zwracany natychmiast. User fn nigdy nie wywoływany.', ch:[] },
+                  ]},
+                { id:'mfail',lbl:'✗ Metoda niezarejestrowana', c:'#f85149', outcome:'405 + Allow header',
+                  desc:'MethodRouter zwraca 405 z nagłówkiem Allow listującym wszystkie zarejestrowane metody dla tej ścieżki.', ch:[] },
+              ]},
+          ]},
+        { id:'pfail',lbl:'✗ Ścieżka nie znaleziona', c:'#f85149', outcome:'404 Not Found',
+          desc:'catch_all_fallback.call_with_state(req, ()) wywołany. Domyślnie: prosty 404. Nadpisz przez .fallback(handler).', ch:[] },
+      ]},
+  ]
+};
+
+function renderErrors() {
+  clearScene();
+  const { W, H } = dims();
+  viz.setAttribute('width', W); viz.setAttribute('height', H);
+  setLabel('Ścieżki Błędów', 'Każdy możliwy wynik HTTP — kliknij węzeł po przyczynę');
+  setLegend([
+    {c:'#58a6ff', l:'request / krok routingu'},
+    {c:'#ffa657', l:'punkt decyzyjny'},
+    {c:'#3fb950', l:'sukces / kontynuacja'},
+    {c:'#f85149', l:'odpowiedź błędu'},
+  ]);
+  setCtrl([]);
+  mkArrow('a-e','#444');
+
+  const BW = 155, BH = 46, GAPY = 76;
+
+  // BFS to assign depth and breadth positions
+  function flatTree(node, depth) {
+    return [{ ...node, depth }, ...(node.ch||[]).flatMap(c => flatTree(c, depth+1))];
+  }
+  const flat = flatTree(errTree, 0);
+  const byDepth = {};
+  flat.forEach(n => { (byDepth[n.depth] = byDepth[n.depth]||[]).push(n); });
+
+  const maxDepth = Math.max(...flat.map(n => n.depth));
+  const treeH = (maxDepth + 1) * (BH + GAPY) + 30;
+  const scale = Math.min(1, (H - 40) / treeH);
+
+  Object.entries(byDepth).forEach(([depth, nodes]) => {
+    const n = nodes.length;
+    const startX = W/2 - ((n-1)*(BW+30))/2;
+    nodes.forEach((node, i) => {
+      node.px = startX + i*(BW+30) + BW/2;
+      node.py = 40 + depth * (BH + GAPY) * scale + BH/2;
+    });
+  });
+
+  const parentOf = n => flat.find(p => p.ch && p.ch.some(c => c.id === n.id));
+
+  flat.filter(n => parentOf(n)).forEach(n => {
+    const p = parentOf(n);
+    add(viz, 'path', {
+      d:`M${p.px},${p.py+BH/2} C${p.px},${p.py+BH/2+26} ${n.px},${n.py-BH/2-26} ${n.px},${n.py-BH/2}`,
+      fill:'none', stroke:'#2d3748', 'stroke-width':'1.5', 'marker-end':'url(#a-e)',
+    });
+  });
+
+  flat.forEach(n => {
+    const g = add(viz, 'g', { class:'nd', transform:`translate(${n.px-BW/2},${n.py-BH/2})` });
+    add(g, 'rect', { width:BW, height:BH, rx:'7',
+      fill:n.c+'18', stroke:n.c, 'stroke-width':'1.8' });
+    const lns = n.lbl.split('\n');
+    lns.forEach((ln, i) => {
+      add(g, 'text', {
+        x:BW/2, y:BH/2+(i-(lns.length-1)/2)*13,
+        'text-anchor':'middle','dominant-baseline':'central',
+        'font-size':'11', fill:n.c, 'font-weight': n.outcome?'700':'400',
+      }, ln);
+    });
+    if (n.outcome) {
+      add(g, 'text', { x:BW/2, y:BH+14,
+        'text-anchor':'middle','font-size':'10',fill:n.c,'font-weight':'600',
+      }, '→ ' + n.outcome);
+    }
+    g.addEventListener('click',()=>{
+      selectNode(g);
+      detail(n.lbl.replace('\n',' '), n.outcome||'',
+        `<p>${n.desc}</p>` + (n.outcome?`<br><strong style="color:${n.c}">HTTP: ${n.outcome}</strong>`:''));
+    });
+  });
+}
+
+// ─── CHAPTER ROUTER ───────────────────────────────────────────────────────────
+const renderers = { arch:renderArch, journey:renderJourney, traits:renderTraits, errors:renderErrors };
+document.querySelectorAll('#nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#nav button').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    renderers[btn.dataset.ch]();
+  });
+});
+window.addEventListener('resize', () => renderers[
+  document.querySelector('#nav button.on').dataset.ch
+]());
+
+// Start after full layout
+window.addEventListener('load', () => requestAnimationFrame(() => renderArch()));
+</script>
+</body>
+</html>

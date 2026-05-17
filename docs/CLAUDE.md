@@ -16,22 +16,32 @@ gh api repos/tokio-rs/axum/contents/<path> --jq '.content' | base64 -d
 
 | Path | Contents |
 |------|----------|
-| `docs/` | Reference documents: architecture overview, request lifecycle diagrams, entry-point catalogue, dependency tables, quality report |
-| `docs/diagrams/` | Mermaid diagrams (see table below) and their rendered PNG/HTML previews |
-| `answers/` | Question-driven analysis files — one file per prompt/question |
-| `answers/improved answers/` | Revised or expanded versions of earlier answers |
-| `answers/answer for last subpart/` | Numbered answer variants for the final sub-question |
+| `docs/` | Reference documents: architecture overview, request lifecycle diagrams, entry-point catalogue, dependency tables, quality report; also this `CLAUDE.md` |
+| `docs/diagrams/` | Core Mermaid diagrams and their rendered PNG/HTML previews |
+| `docs/diagrams/last_diagrams/` | Newest diagrams: 3 Mermaid files + interactive HTML visualization (with internet) |
 
 ### Diagram inventory
+
+#### Core diagrams — `docs/diagrams/`
 
 | File | Diagram type | What it shows |
 |------|-------------|---------------|
 | `docs/diagrams/architecture.md` | Flowchart | System layers: TCP → serve → hyper → Tower middleware → Router → Handler → extractors/responses; crate boundaries |
 | `docs/diagrams/request-sequence.md` | Flowchart (detailed) | Full happy-path + error paths with file:line annotations at every node |
 | `docs/diagrams/data_models.md` | ER diagram | Key types and traits as entities (`Router`, `PathRouter`, `MethodRouter`, `Request`, `Response`, trait relationships) |
-| `docs/diagrams/sequence_request_lifecycle.md` | **Sequence diagram** | Autonumbered actor-to-actor message flow for `POST /users`; `alt`/`loop` blocks for 404, 405, and extraction failures |
-| `docs/diagrams/state_router_and_request.md` | **State diagram (×2)** | (1) `Router<S>` compile-time type-state machine: Building → Ready → Serving; (2) runtime request processing states: Accepted → PathMatching → … → Sending |
-| `docs/diagrams/class_type_hierarchy.md` | **Class diagram (×2)** | (1) Routing ownership chain: `Router` → `RouterInner` → `PathRouter` → `Node` → `Endpoint` → `MethodRouter` → `MethodEndpoint`; (2) trait system: `Service`, `Handler`, `FromRequestParts`, `FromRequest`, `IntoResponse` with all concrete implementors |
+| `docs/diagrams/axum_story_offline.html` | **Interactive (offline)** | Four-chapter visualization — no external dependencies, vanilla JS + SVG. Open directly from filesystem, works without internet |
+
+#### New diagrams — `docs/diagrams/last_diagrams/`
+
+| File | Diagram type | What it shows |
+|------|-------------|---------------|
+| `docs/diagrams/last_diagrams/sequence_request_lifecycle.md` | **Sequence diagram** | Autonumbered actor-to-actor message flow for `POST /users`; `alt`/`loop` blocks for 404, 405, and extraction failures |
+| `docs/diagrams/last_diagrams/state_router_and_request.md` | **State diagram (×2)** | (1) `Router<S>` compile-time type-state machine: Building → Ready → Serving; (2) runtime request processing states: Accepted → PathMatching → … → Sending |
+| `docs/diagrams/last_diagrams/class_type_hierarchy.md` | **Class diagram (×2)** | (1) Routing ownership chain: `Router` → `RouterInner` → `PathRouter` → `Node` → `Endpoint` → `MethodRouter` → `MethodEndpoint`; (2) trait system: `Service`, `Handler`, `FromRequestParts`, `FromRequest`, `IntoResponse` with all concrete implementors |
+| `docs/diagrams/last_diagrams/extractor_decision.md` | **Flowchart** | Developer decision tree: `FromRequestParts` vs `FromRequest`, position constraints, runtime execution order enforced by `impl_handler!`, rejection propagation |
+| `docs/diagrams/last_diagrams/middleware_composition.md` | **Flowchart (×3)** | Tower middleware "onion" model; `.layer()` vs `.route_layer()` difference (route-only layers skip 404 fallback); registration order → execution order; `from_fn` async middleware |
+| `docs/diagrams/last_diagrams/feature_flags.md` | **Flowchart (×4)** | Cargo feature flag map for all four crates: which features are on by default, what each unlocks, external dependency cost |
+| `docs/diagrams/last_diagrams/axum_story_interactive.html` | **Interactive D3.js** | Four-chapter browser visualization: (1) force-directed crate dependency graph (drag nodes); (2) animated request journey with ▶ Happy / 404 / 405 scenarios; (3) force-directed trait/impl system; (4) clickable error-path decision tree. **Requires internet** (D3.js CDN) |
 
 ## Document conventions
 
